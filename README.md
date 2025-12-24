@@ -1,2 +1,2 @@
-# siater-connector---2025
+# siater-connector
 woocommerce siater plugin
