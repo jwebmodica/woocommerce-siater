@@ -5,7 +5,7 @@
  * Handles debug logging with automatic rotation
  */
 
-namespace Siater2026\Utils;
+namespace Siater\Utils;
 
 defined('ABSPATH') || exit;
 
@@ -50,7 +50,7 @@ class Logger {
      * Constructor
      */
     private function __construct() {
-        $this->log_file = WP_CONTENT_DIR . '/siater-2026-debug.log';
+        $this->log_file = WP_CONTENT_DIR . '/siater-debug.log';
         $this->start_time = microtime(true);
     }
 

@@ -6,12 +6,12 @@
  * Uses SKU (cod) to check if product exists instead of custom table
  */
 
-namespace Siater2026\Product;
+namespace Siater\Product;
 
 defined('ABSPATH') || exit;
 
-use Siater2026\Core\Settings;
-use Siater2026\Utils\Logger;
+use Siater\Core\Settings;
+use Siater\Utils\Logger;
 
 class ProductHandler {
 

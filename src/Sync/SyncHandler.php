@@ -6,14 +6,14 @@
  * Uses original wp_siater_feed table for state management
  */
 
-namespace Siater2026\Sync;
+namespace Siater\Sync;
 
 defined('ABSPATH') || exit;
 
-use Siater2026\Core\Settings;
-use Siater2026\Utils\Logger;
-use Siater2026\Product\ProductHandler;
-use Siater2026\Product\VariationHandler;
+use Siater\Core\Settings;
+use Siater\Utils\Logger;
+use Siater\Product\ProductHandler;
+use Siater\Product\VariationHandler;
 
 class SyncHandler {
 

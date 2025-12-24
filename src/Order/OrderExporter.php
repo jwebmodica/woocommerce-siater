@@ -5,12 +5,12 @@
  * Exports WooCommerce orders to CSV for SIA system
  */
 
-namespace Siater2026\Order;
+namespace Siater\Order;
 
 defined('ABSPATH') || exit;
 
-use Siater2026\Core\Settings;
-use Siater2026\Utils\Logger;
+use Siater\Core\Settings;
+use Siater\Utils\Logger;
 
 class OrderExporter {
 

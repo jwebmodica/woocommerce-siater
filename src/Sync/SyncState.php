@@ -6,7 +6,7 @@
  * Uses id=777 row format with columns: inizio, offsetto, sincro, sync_lock, lock_timestamp
  */
 
-namespace Siater2026\Sync;
+namespace Siater\Sync;
 
 defined('ABSPATH') || exit;
 

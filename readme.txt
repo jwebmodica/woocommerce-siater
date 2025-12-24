@@ -1,10 +1,10 @@
-=== Siater Connector 2026 ===
+=== Siater Connector ===
 Contributors: jweb, sicilwareinformatica
 Tags: woocommerce, sia, gestionale, sync, import
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 3.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -12,7 +12,7 @@ Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica)
 
 == Description ==
 
-Siater Connector 2026 permette di sincronizzare automaticamente i prodotti dal gestionale SIA al tuo negozio WooCommerce.
+Siater Connector permette di sincronizzare automaticamente i prodotti dal gestionale SIA al tuo negozio WooCommerce.
 
 = Caratteristiche Principali =
 
@@ -46,14 +46,20 @@ Per la sincronizzazione automatica, configura questi cron job:
 
 == Installation ==
 
-1. Carica la cartella `siater-2026` nella directory `/wp-content/plugins/`
+1. Carica la cartella `siater` nella directory `/wp-content/plugins/`
 2. Attiva il plugin dal menu 'Plugin' di WordPress
-3. Vai su Siater 2026 > Impostazioni
+3. Vai su Siater > Impostazioni
 4. Inserisci il codice licenza e nome utente
 5. Configura l'URL del sistema SIA e le opzioni desiderate
 6. Configura i cron job per la sincronizzazione automatica
 
 == Changelog ==
+
+= 3.0.0 =
+* Rinominato plugin da "Siater Connector 2026" a "Siater Connector"
+* Namespace aggiornato da Siater2026 a Siater
+* Slug admin semplificato (siater invece di siater-2026)
+* Pulizia codice e standardizzazione naming
 
 = 1.0.0 =
 * Prima versione del plugin completamente riscritto
@@ -66,6 +72,9 @@ Per la sincronizzazione automatica, configura questi cron job:
 * Gestione memoria ottimizzata
 
 == Upgrade Notice ==
+
+= 3.0.0 =
+Aggiornamento naming del plugin. Rinominare la cartella del plugin in "siater" dopo l'aggiornamento.
 
 = 1.0.0 =
 Nuova versione completamente riscritta. Backup consigliato prima dell'aggiornamento.

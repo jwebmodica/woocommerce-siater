@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name: Siater Connector 2026
+ * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 1.0.0
+ * Version: 3.0.0
  * Author: Jweb / Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
- * Text Domain: siater-2026
+ * Text Domain: siater
  * Domain Path: /languages
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -19,18 +19,18 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_2026_VERSION', '1.0.0');
-define('SIATER_2026_PLUGIN_FILE', __FILE__);
-define('SIATER_2026_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('SIATER_2026_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('SIATER_2026_PLUGIN_BASENAME', plugin_basename(__FILE__));
+define('SIATER_VERSION', '3.0.0');
+define('SIATER_PLUGIN_FILE', __FILE__);
+define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('SIATER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
  * Autoloader for plugin classes
  */
 spl_autoload_register(function ($class) {
-    $prefix = 'Siater2026\\';
-    $base_dir = SIATER_2026_PLUGIN_DIR . 'src/';
+    $prefix = 'Siater\\';
+    $base_dir = SIATER_PLUGIN_DIR . 'src/';
 
     $len = strlen($prefix);
     if (strncmp($prefix, $class, $len) !== 0) {
@@ -48,39 +48,39 @@ spl_autoload_register(function ($class) {
 /**
  * Cron hook names
  */
-define('SIATER_CRON_SYNC', 'siater_2026_cron_sync');
-define('SIATER_CRON_EXPORT', 'siater_2026_cron_export');
-define('SIATER_CRON_CLEANUP', 'siater_2026_cron_cleanup');
+define('SIATER_CRON_SYNC', 'siater_cron_sync');
+define('SIATER_CRON_EXPORT', 'siater_cron_export');
+define('SIATER_CRON_CLEANUP', 'siater_cron_cleanup');
 
 /**
  * Main Plugin Class
  */
-final class Siater_2026 {
+final class Siater {
 
     /**
      * Plugin instance
      */
-    private static ?Siater_2026 $instance = null;
+    private static ?Siater $instance = null;
 
     /**
      * License manager
      */
-    public \Siater2026\License\LicenseManager $license;
+    public \Siater\License\LicenseManager $license;
 
     /**
      * Settings manager
      */
-    public \Siater2026\Core\Settings $settings;
+    public \Siater\Core\Settings $settings;
 
     /**
      * Admin handler
      */
-    public ?\Siater2026\Admin\AdminHandler $admin = null;
+    public ?\Siater\Admin\AdminHandler $admin = null;
 
     /**
      * Get plugin instance
      */
-    public static function instance(): Siater_2026 {
+    public static function instance(): Siater {
         if (self::$instance === null) {
             self::$instance = new self();
         }
@@ -102,7 +102,7 @@ final class Siater_2026 {
         if (version_compare(PHP_VERSION, '7.4', '<')) {
             add_action('admin_notices', function() {
                 echo '<div class="error"><p>';
-                echo esc_html__('Siater 2026 richiede PHP 7.4 o superiore.', 'siater-2026');
+                echo esc_html__('Siater richiede PHP 7.4 o superiore.', 'siater');
                 echo '</p></div>';
             });
             return;
@@ -114,12 +114,12 @@ final class Siater_2026 {
      */
     private function init(): void {
         // Initialize core components
-        $this->license = new \Siater2026\License\LicenseManager();
-        $this->settings = new \Siater2026\Core\Settings();
+        $this->license = new \Siater\License\LicenseManager();
+        $this->settings = new \Siater\Core\Settings();
 
         // Admin hooks
         if (is_admin()) {
-            $this->admin = new \Siater2026\Admin\AdminHandler();
+            $this->admin = new \Siater\Admin\AdminHandler();
         }
 
         // Load text domain
@@ -144,41 +144,41 @@ final class Siater_2026 {
         // Sync intervals
         $schedules['siater_every_3_min'] = [
             'interval' => 180,
-            'display' => __('Ogni 3 minuti', 'siater-2026'),
+            'display' => __('Ogni 3 minuti', 'siater'),
         ];
         $schedules['siater_every_5_min'] = [
             'interval' => 300,
-            'display' => __('Ogni 5 minuti', 'siater-2026'),
+            'display' => __('Ogni 5 minuti', 'siater'),
         ];
         $schedules['siater_every_10_min'] = [
             'interval' => 600,
-            'display' => __('Ogni 10 minuti', 'siater-2026'),
+            'display' => __('Ogni 10 minuti', 'siater'),
         ];
         $schedules['siater_every_15_min'] = [
             'interval' => 900,
-            'display' => __('Ogni 15 minuti', 'siater-2026'),
+            'display' => __('Ogni 15 minuti', 'siater'),
         ];
         // Export intervals
         $schedules['siater_every_30_min'] = [
             'interval' => 1800,
-            'display' => __('Ogni 30 minuti', 'siater-2026'),
+            'display' => __('Ogni 30 minuti', 'siater'),
         ];
         $schedules['siater_every_1_hour'] = [
             'interval' => 3600,
-            'display' => __('Ogni ora', 'siater-2026'),
+            'display' => __('Ogni ora', 'siater'),
         ];
         // Cleanup intervals
         $schedules['siater_daily'] = [
             'interval' => 86400,
-            'display' => __('Una volta al giorno', 'siater-2026'),
+            'display' => __('Una volta al giorno', 'siater'),
         ];
         $schedules['siater_every_3_days'] = [
             'interval' => 259200,
-            'display' => __('Ogni 3 giorni', 'siater-2026'),
+            'display' => __('Ogni 3 giorni', 'siater'),
         ];
         $schedules['siater_weekly'] = [
             'interval' => 604800,
-            'display' => __('Una volta a settimana', 'siater-2026'),
+            'display' => __('Una volta a settimana', 'siater'),
         ];
         return $schedules;
     }
@@ -210,7 +210,7 @@ final class Siater_2026 {
             return;
         }
 
-        $sync = new \Siater2026\Sync\SyncHandler($this->settings);
+        $sync = new \Siater\Sync\SyncHandler($this->settings);
         $sync->run();
     }
 
@@ -222,7 +222,7 @@ final class Siater_2026 {
             return;
         }
 
-        $export = new \Siater2026\Order\OrderExporter($this->settings);
+        $export = new \Siater\Order\OrderExporter($this->settings);
         $export->run();
     }
 
@@ -235,7 +235,7 @@ final class Siater_2026 {
             return;
         }
 
-        $cleaner = new \Siater2026\Sync\ProductCleaner($this->settings);
+        $cleaner = new \Siater\Sync\ProductCleaner($this->settings);
         $cleaner->run();
     }
 
@@ -244,9 +244,9 @@ final class Siater_2026 {
      */
     public function load_textdomain(): void {
         load_plugin_textdomain(
-            'siater-2026',
+            'siater',
             false,
-            dirname(SIATER_2026_PLUGIN_BASENAME) . '/languages'
+            dirname(SIATER_PLUGIN_BASENAME) . '/languages'
         );
     }
 
@@ -320,7 +320,7 @@ final class Siater_2026 {
         }
 
         // Run sync
-        $sync = new \Siater2026\Sync\SyncHandler($this->settings);
+        $sync = new \Siater\Sync\SyncHandler($this->settings);
         $sync->run();
     }
 
@@ -340,7 +340,7 @@ final class Siater_2026 {
         }
 
         // Run export
-        $export = new \Siater2026\Order\OrderExporter($this->settings);
+        $export = new \Siater\Order\OrderExporter($this->settings);
         $export->run();
     }
 
@@ -361,7 +361,7 @@ final class Siater_2026 {
         }
 
         // Run cleanup
-        $cleaner = new \Siater2026\Sync\ProductCleaner($this->settings);
+        $cleaner = new \Siater\Sync\ProductCleaner($this->settings);
         $cleaner->run();
         echo "Cleanup executed\n";
     }
@@ -551,7 +551,7 @@ register_activation_hook(__FILE__, function() {
     }
 
     // Schedule cron events
-    Siater_2026::schedule_cron_events();
+    Siater::schedule_cron_events();
 
     // Flush rewrite rules
     flush_rewrite_rules();
@@ -562,15 +562,15 @@ register_activation_hook(__FILE__, function() {
  */
 register_deactivation_hook(__FILE__, function() {
     // Clear cron events
-    Siater_2026::clear_cron_events();
+    Siater::clear_cron_events();
     flush_rewrite_rules();
 });
 
 /**
  * Get plugin instance
  */
-function siater_2026(): Siater_2026 {
-    return Siater_2026::instance();
+function siater(): Siater {
+    return Siater::instance();
 }
 
 /**
@@ -581,11 +581,11 @@ add_action('plugins_loaded', function() {
     if (!class_exists('WooCommerce')) {
         add_action('admin_notices', function() {
             echo '<div class="error"><p>';
-            echo esc_html__('Siater 2026 richiede WooCommerce per funzionare.', 'siater-2026');
+            echo esc_html__('Siater richiede WooCommerce per funzionare.', 'siater');
             echo '</p></div>';
         });
         return;
     }
 
-    siater_2026();
+    siater();
 });

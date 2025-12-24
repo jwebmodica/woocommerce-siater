@@ -1,27 +1,27 @@
 /**
- * Siater 2026 Admin Styles
+ * Siater Admin Styles
  */
 
-.siater-2026-admin {
+.siater-admin {
     max-width: 900px;
 }
 
-.siater-2026-admin h2 {
+.siater-admin h2 {
     margin-top: 30px;
     padding-top: 20px;
     border-top: 1px solid #ccc;
 }
 
-.siater-2026-admin h2:first-of-type {
+.siater-admin h2:first-of-type {
     border-top: none;
     margin-top: 20px;
 }
 
-.siater-2026-admin .form-table th {
+.siater-admin .form-table th {
     width: 200px;
 }
 
-.siater-2026-admin code {
+.siater-admin code {
     display: block;
     padding: 10px 15px;
     background: #f0f0f1;
@@ -31,7 +31,7 @@
     word-break: break-all;
 }
 
-.siater-2026-admin .card {
+.siater-admin .card {
     max-width: 600px;
     padding: 20px;
     background: #fff;
@@ -39,12 +39,12 @@
     box-shadow: 0 1px 1px rgba(0,0,0,.04);
 }
 
-.siater-2026-admin .notice {
+.siater-admin .notice {
     margin: 15px 0;
 }
 
 /* Debug Log Styles */
-.siater-2026-admin pre {
+.siater-admin pre {
     white-space: pre-wrap;
     word-wrap: break-word;
 }

@@ -9,12 +9,12 @@
  * 3) Trash products not found in SIA
  */
 
-namespace Siater2026\Sync;
+namespace Siater\Sync;
 
 defined('ABSPATH') || exit;
 
-use Siater2026\Core\Settings;
-use Siater2026\Utils\Logger;
+use Siater\Core\Settings;
+use Siater\Utils\Logger;
 
 class ProductCleaner {
 

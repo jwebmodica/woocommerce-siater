@@ -6,7 +6,7 @@
  * Uses wp_siater_settings with id=777 row format
  */
 
-namespace Siater2026\Core;
+namespace Siater\Core;
 
 defined('ABSPATH') || exit;
 

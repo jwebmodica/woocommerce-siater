@@ -6,7 +6,7 @@
  * Uses a smarter caching system with transients
  */
 
-namespace Siater2026\License;
+namespace Siater\License;
 
 defined('ABSPATH') || exit;
 
@@ -30,7 +30,7 @@ class LicenseManager {
     /**
      * Current version
      */
-    private string $version = '1.0.0';
+    private string $version = '3.0.0';
 
     /**
      * License file path
@@ -40,7 +40,7 @@ class LicenseManager {
     /**
      * Cache transient key
      */
-    private string $cache_key = 'siater_2026_license_status';
+    private string $cache_key = 'siater_license_status';
 
     /**
      * Cache duration in seconds (12 hours)
@@ -51,7 +51,7 @@ class LicenseManager {
      * Constructor
      */
     public function __construct() {
-        $this->license_file = WP_CONTENT_DIR . '/siater-2026.lic';
+        $this->license_file = WP_CONTENT_DIR . '/siater.lic';
     }
 
     /**
@@ -122,13 +122,13 @@ class LicenseManager {
 
             return [
                 'success' => true,
-                'message' => $response['message'] ?? __('Licenza attivata con successo', 'siater-2026'),
+                'message' => $response['message'] ?? __('Licenza attivata con successo', 'siater'),
             ];
         }
 
         return [
             'success' => false,
-            'message' => $response['message'] ?? __('Errore durante l\'attivazione', 'siater-2026'),
+            'message' => $response['message'] ?? __('Errore durante l\'attivazione', 'siater'),
         ];
     }
 
@@ -141,7 +141,7 @@ class LicenseManager {
         if (!$license_data) {
             return [
                 'valid' => false,
-                'message' => __('Nessuna licenza trovata', 'siater-2026'),
+                'message' => __('Nessuna licenza trovata', 'siater'),
             ];
         }
 
@@ -166,7 +166,7 @@ class LicenseManager {
         if (!$license_data) {
             return [
                 'success' => false,
-                'message' => __('Nessuna licenza da disattivare', 'siater-2026'),
+                'message' => __('Nessuna licenza da disattivare', 'siater'),
             ];
         }
 
@@ -185,13 +185,13 @@ class LicenseManager {
 
             return [
                 'success' => true,
-                'message' => $response['message'] ?? __('Licenza disattivata', 'siater-2026'),
+                'message' => $response['message'] ?? __('Licenza disattivata', 'siater'),
             ];
         }
 
         return [
             'success' => false,
-            'message' => $response['message'] ?? __('Errore durante la disattivazione', 'siater-2026'),
+            'message' => $response['message'] ?? __('Errore durante la disattivazione', 'siater'),
         ];
     }
 
@@ -240,7 +240,7 @@ class LicenseManager {
 
         return is_array($decoded) ? $decoded : [
             'status' => false,
-            'message' => __('Risposta non valida dal server', 'siater-2026'),
+            'message' => __('Risposta non valida dal server', 'siater'),
         ];
     }
 
