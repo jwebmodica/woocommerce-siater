@@ -1,207 +1,40 @@
 <?php
-/**
- * Sync State Manager
- *
- * Manages synchronization state - COMPATIBLE with original wp_siater_feed table
- * Uses id=777 row format with columns: inizio, offsetto, sincro, sync_lock, lock_timestamp
- */
-
-namespace Siater\Sync;
-
-defined('ABSPATH') || exit;
-
-class SyncState {
-
-    /**
-     * Table name
-     */
-    private string $table;
-
-    /**
-     * Constructor
-     */
-    public function __construct() {
-        global $wpdb;
-        $this->table = $wpdb->prefix . 'siater_feed';
-    }
-
-    /**
-     * Get current state
-     */
-    public function get(): ?object {
-        global $wpdb;
-        return $wpdb->get_row("SELECT * FROM {$this->table} WHERE id = 777");
-    }
-
-    /**
-     * Get current offset
-     */
-    public function get_offset(): int {
-        $state = $this->get();
-        return $state ? (int) $state->offsetto : 0;
-    }
-
-    /**
-     * Set offset
-     */
-    public function set_offset(int $offset): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            ['offsetto' => $offset],
-            ['id' => 777],
-            ['%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Get last sync timestamp
-     */
-    public function get_last_sync(): int {
-        $state = $this->get();
-        return $state ? (int) $state->inizio : 0;
-    }
-
-    /**
-     * Check if sync is in progress
-     */
-    public function is_syncing(): bool {
-        $state = $this->get();
-        return $state && (bool) $state->sincro;
-    }
-
-    /**
-     * Set sync in progress flag
-     */
-    public function set_syncing(bool $syncing): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            ['sincro' => $syncing ? 1 : 0],
-            ['id' => 777],
-            ['%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Mark sync as completed - reset state
-     */
-    public function mark_completed(): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            [
-                'inizio' => time(),
-                'offsetto' => 0,
-                'sincro' => 0,
-                'sync_lock' => 0,
-                'lock_timestamp' => 0,
-            ],
-            ['id' => 777],
-            ['%d', '%d', '%d', '%d', '%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Check if sync is currently locked
-     */
-    public function is_locked(): bool {
-        $state = $this->get();
-        return $state && (bool) $state->sync_lock;
-    }
-
-    /**
-     * Acquire lock
-     */
-    public function acquire_lock(): bool {
-        global $wpdb;
-
-        $state = $this->get();
-
-        // Check for stale lock (> 10 minutes)
-        if ($state && $state->sync_lock) {
-            $lock_age = time() - (int) $state->lock_timestamp;
-            if ($lock_age < 600) {
-                return false; // Lock is still valid
-            }
-        }
-
-        // Acquire lock
-        return $wpdb->update(
-            $this->table,
-            [
-                'sync_lock' => 1,
-                'lock_timestamp' => time(),
-                'sincro' => 1,
-            ],
-            ['id' => 777],
-            ['%d', '%d', '%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Release lock
-     */
-    public function release_lock(): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            [
-                'sync_lock' => 0,
-                'lock_timestamp' => 0,
-            ],
-            ['id' => 777],
-            ['%d', '%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Reset sync state completely
-     */
-    public function reset(): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            [
-                'inizio' => 0,
-                'offsetto' => 0,
-                'sincro' => 0,
-                'sync_lock' => 0,
-                'lock_timestamp' => 0,
-            ],
-            ['id' => 777],
-            ['%d', '%d', '%d', '%d', '%d'],
-            ['%d']
-        ) !== false;
-    }
-
-    /**
-     * Get hours since last sync
-     */
-    public function hours_since_last_sync(): float {
-        $last_sync = $this->get_last_sync();
-        if ($last_sync === 0) {
-            return PHP_FLOAT_MAX;
-        }
-        return (time() - $last_sync) / 3600;
-    }
-
-    /**
-     * Update lock timestamp (heartbeat)
-     */
-    public function update_lock_timestamp(): bool {
-        global $wpdb;
-        return $wpdb->update(
-            $this->table,
-            ['lock_timestamp' => time()],
-            ['id' => 777],
-            ['%d'],
-            ['%d']
-        ) !== false;
-    }
-}
+/* Siater Connector - Protected Code */
+$__bd7b2cc4='bmFtZXNwYWNlIFNpYXRlclxTeW5jO2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDtjbGFzcyBTeW5jU3Rh'.
+'dGV7cHJpdmF0ZSBzdHJpbmcgJHRhYmxlO3B1YmxpYyBmdW5jdGlvbiBfX2NvbnN0cnVjdCgpe2dsb2Jh'.
+'bCAkd3BkYjskdGhpcy0+dGFibGU9JHdwZGItPnByZWZpeC4nc2lhdGVyX2ZlZWQnO31wdWJsaWMgZnVu'.
+'Y3Rpb24gZ2V0KCk6P29iamVjdHtnbG9iYWwgJHdwZGI7cmV0dXJuICR3cGRiLT5nZXRfcm93KCJTRUxF'.
+'Q1QqRlJPTXskdGhpcy0+dGFibGV9V0hFUkUgaWQ9Nzc3Iik7fXB1YmxpYyBmdW5jdGlvbiBnZXRfb2Zm'.
+'c2V0KCk6aW50eyRzdGF0ZT0kdGhpcy0+Z2V0KCk7cmV0dXJuICRzdGF0ZSA/KGludCkkc3RhdGUtPm9m'.
+'ZnNldHRvOjA7fXB1YmxpYyBmdW5jdGlvbiBzZXRfb2Zmc2V0KGludCAkb2Zmc2V0KTpib29se2dsb2Jh'.
+'bCAkd3BkYjtyZXR1cm4gJHdwZGItPnVwZGF0ZSgkdGhpcy0+dGFibGUsWydvZmZzZXR0byc9PiRvZmZz'.
+'ZXRdLFsnaWQnPT43NzddLFsnJWQnXSxbJyVkJ10pIT09ZmFsc2U7fXB1YmxpYyBmdW5jdGlvbiBnZXRf'.
+'bGFzdF9zeW5jKCk6aW50eyRzdGF0ZT0kdGhpcy0+Z2V0KCk7cmV0dXJuICRzdGF0ZSA/KGludCkkc3Rh'.
+'dGUtPmluaXppbzowO31wdWJsaWMgZnVuY3Rpb24gaXNfc3luY2luZygpOmJvb2x7JHN0YXRlPSR0aGlz'.
+'LT5nZXQoKTtyZXR1cm4gJHN0YXRlJiYoYm9vbCkkc3RhdGUtPnNpbmNybzt9cHVibGljIGZ1bmN0aW9u'.
+'IHNldF9zeW5jaW5nKGJvb2wgJHN5bmNpbmcpOmJvb2x7Z2xvYmFsICR3cGRiO3JldHVybiAkd3BkYi0+'.
+'dXBkYXRlKCR0aGlzLT50YWJsZSxbJ3NpbmNybyc9PiRzeW5jaW5nID8gMTowXSxbJ2lkJz0+Nzc3XSxb'.
+'JyVkJ10sWyclZCddKSE9PWZhbHNlO31wdWJsaWMgZnVuY3Rpb24gbWFya19jb21wbGV0ZWQoKTpib29s'.
+'e2dsb2JhbCAkd3BkYjtyZXR1cm4gJHdwZGItPnVwZGF0ZSgkdGhpcy0+dGFibGUsWydpbml6aW8nPT50'.
+'aW1lKCksJ29mZnNldHRvJz0+MCwnc2luY3JvJz0+MCwnc3luY19sb2NrJz0+MCwnbG9ja190aW1lc3Rh'.
+'bXAnPT4wLF0sWydpZCc9Pjc3N10sWyclZCcsJyVkJywnJWQnLCclZCcsJyVkJ10sWyclZCddKSE9PWZh'.
+'bHNlO31wdWJsaWMgZnVuY3Rpb24gaXNfbG9ja2VkKCk6Ym9vbHskc3RhdGU9JHRoaXMtPmdldCgpO3Jl'.
+'dHVybiAkc3RhdGUmJihib29sKSRzdGF0ZS0+c3luY19sb2NrO31wdWJsaWMgZnVuY3Rpb24gYWNxdWly'.
+'ZV9sb2NrKCk6Ym9vbHtnbG9iYWwgJHdwZGI7JHN0YXRlPSR0aGlzLT5nZXQoKTtpZigkc3RhdGUmJiRz'.
+'dGF0ZS0+c3luY19sb2NrKXskbG9ja19hZ2U9dGltZSgpLShpbnQpJHN0YXRlLT5sb2NrX3RpbWVzdGFt'.
+'cDtpZigkbG9ja19hZ2U8NjAwKXtyZXR1cm4gZmFsc2U7fX1yZXR1cm4gJHdwZGItPnVwZGF0ZSgkdGhp'.
+'cy0+dGFibGUsWydzeW5jX2xvY2snPT4xLCdsb2NrX3RpbWVzdGFtcCc9PnRpbWUoKSwnc2luY3JvJz0+'.
+'MSxdLFsnaWQnPT43NzddLFsnJWQnLCclZCcsJyVkJ10sWyclZCddKSE9PWZhbHNlO31wdWJsaWMgZnVu'.
+'Y3Rpb24gcmVsZWFzZV9sb2NrKCk6Ym9vbHtnbG9iYWwgJHdwZGI7cmV0dXJuICR3cGRiLT51cGRhdGUo'.
+'JHRoaXMtPnRhYmxlLFsnc3luY19sb2NrJz0+MCwnbG9ja190aW1lc3RhbXAnPT4wLF0sWydpZCc9Pjc3'.
+'N10sWyclZCcsJyVkJ10sWyclZCddKSE9PWZhbHNlO31wdWJsaWMgZnVuY3Rpb24gcmVzZXQoKTpib29s'.
+'e2dsb2JhbCAkd3BkYjtyZXR1cm4gJHdwZGItPnVwZGF0ZSgkdGhpcy0+dGFibGUsWydpbml6aW8nPT4w'.
+'LCdvZmZzZXR0byc9PjAsJ3NpbmNybyc9PjAsJ3N5bmNfbG9jayc9PjAsJ2xvY2tfdGltZXN0YW1wJz0+'.
+'MCxdLFsnaWQnPT43NzddLFsnJWQnLCclZCcsJyVkJywnJWQnLCclZCddLFsnJWQnXSkhPT1mYWxzZTt9'.
+'cHVibGljIGZ1bmN0aW9uIGhvdXJzX3NpbmNlX2xhc3Rfc3luYygpOmZsb2F0eyRsYXN0X3N5bmM9JHRo'.
+'aXMtPmdldF9sYXN0X3N5bmMoKTtpZigkbGFzdF9zeW5jPT09MCl7cmV0dXJuIFBIUF9GTE9BVF9NQVg7'.
+'fXJldHVybih0aW1lKCktJGxhc3Rfc3luYykvMzYwMDt9cHVibGljIGZ1bmN0aW9uIHVwZGF0ZV9sb2Nr'.
+'X3RpbWVzdGFtcCgpOmJvb2x7Z2xvYmFsICR3cGRiO3JldHVybiAkd3BkYi0+dXBkYXRlKCR0aGlzLT50'.
+'YWJsZSxbJ2xvY2tfdGltZXN0YW1wJz0+dGltZSgpXSxbJ2lkJz0+Nzc3XSxbJyVkJ10sWyclZCddKSE9'.
+'PWZhbHNlO319';
+eval(base64_decode($__bd7b2cc4));

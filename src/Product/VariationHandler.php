@@ -1,344 +1,179 @@
 <?php
-/**
- * Variation Handler
- *
- * Handles creating and updating product variations (size/color combinations)
- */
-
-namespace Siater\Product;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-
-class VariationHandler {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Image handler
-     */
-    private ImageHandler $image_handler;
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-        $this->image_handler = new ImageHandler($settings);
-    }
-
-    /**
-     * Sync a variation for a variable product
-     *
-     * @param int $parent_id Parent product ID
-     * @param array $data Variation data from feed
-     * @return int|false Variation ID or false on failure
-     */
-    public function sync(int $parent_id, array $data): int|false {
-        $size = $data['variante1'] ?? '';
-        $color = $data['variante2'] ?? '';
-
-        // At least one attribute is required
-        if (empty($size) && empty($color)) {
-            $this->logger->warning("Variation without attributes for product $parent_id");
-            return false;
-        }
-
-        // Ensure attributes exist on parent product
-        $this->ensure_parent_attributes($parent_id, $size, $color);
-
-        // Build variation attributes
-        $attributes = [];
-        if (!empty($size)) {
-            $size_slug = $this->get_attribute_term_slug('pa_size', $size);
-            $attributes['pa_size'] = $size_slug;
-        }
-        if (!empty($color)) {
-            $color_slug = $this->get_attribute_term_slug('pa_color', $color);
-            $attributes['pa_color'] = $color_slug;
-        }
-
-        // Check if variation exists
-        $existing_id = $this->find_variation($parent_id, $attributes);
-
-        if ($existing_id) {
-            return $this->update_variation($existing_id, $data);
-        }
-
-        return $this->create_variation($parent_id, $attributes, $data);
-    }
-
-    /**
-     * Ensure attributes exist on parent product
-     */
-    private function ensure_parent_attributes(int $parent_id, string $size, string $color): void {
-        $product = wc_get_product($parent_id);
-        if (!$product || !$product->is_type('variable')) {
-            return;
-        }
-
-        $existing_attrs = $product->get_attributes();
-        $updated = false;
-
-        // Handle size attribute
-        if (!empty($size)) {
-            $this->ensure_attribute_taxonomy('pa_size', 'Taglia');
-            $this->ensure_attribute_term('pa_size', $size);
-
-            if (!isset($existing_attrs['pa_size'])) {
-                $attr = new \WC_Product_Attribute();
-                $attr->set_id(wc_attribute_taxonomy_id_by_name('pa_size'));
-                $attr->set_name('pa_size');
-                $attr->set_options([]);
-                $attr->set_position(0);
-                $attr->set_visible(true);
-                $attr->set_variation(true);
-                $existing_attrs['pa_size'] = $attr;
-                $updated = true;
-            }
-
-            // Add term to attribute options
-            $current_options = $existing_attrs['pa_size']->get_options();
-            $term = get_term_by('name', $size, 'pa_size');
-            if ($term && !in_array($term->term_id, $current_options)) {
-                $current_options[] = $term->term_id;
-                $existing_attrs['pa_size']->set_options($current_options);
-                $updated = true;
-            }
-        }
-
-        // Handle color attribute
-        if (!empty($color)) {
-            $this->ensure_attribute_taxonomy('pa_color', 'Colore');
-            $this->ensure_attribute_term('pa_color', $color);
-
-            if (!isset($existing_attrs['pa_color'])) {
-                $attr = new \WC_Product_Attribute();
-                $attr->set_id(wc_attribute_taxonomy_id_by_name('pa_color'));
-                $attr->set_name('pa_color');
-                $attr->set_options([]);
-                $attr->set_position(1);
-                $attr->set_visible(true);
-                $attr->set_variation(true);
-                $existing_attrs['pa_color'] = $attr;
-                $updated = true;
-            }
-
-            // Add term to attribute options
-            $current_options = $existing_attrs['pa_color']->get_options();
-            $term = get_term_by('name', $color, 'pa_color');
-            if ($term && !in_array($term->term_id, $current_options)) {
-                $current_options[] = $term->term_id;
-                $existing_attrs['pa_color']->set_options($current_options);
-                $updated = true;
-            }
-        }
-
-        if ($updated) {
-            $product->set_attributes($existing_attrs);
-            $product->save();
-        }
-    }
-
-    /**
-     * Ensure attribute taxonomy exists
-     */
-    private function ensure_attribute_taxonomy(string $taxonomy, string $label): void {
-        // Check if taxonomy exists
-        if (taxonomy_exists($taxonomy)) {
-            return;
-        }
-
-        // Get attribute slug (remove pa_ prefix)
-        $slug = str_replace('pa_', '', $taxonomy);
-
-        // Check if attribute exists in woocommerce_attribute_taxonomies
-        global $wpdb;
-        $exists = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
-                $slug
-            )
-        );
-
-        if (!$exists) {
-            // Create attribute
-            wc_create_attribute([
-                'name' => $label,
-                'slug' => $slug,
-                'type' => 'select',
-                'order_by' => 'menu_order',
-                'has_archives' => false,
-            ]);
-
-            // Register taxonomy
-            register_taxonomy($taxonomy, 'product', [
-                'hierarchical' => false,
-                'labels' => [
-                    'name' => $label,
-                ],
-                'show_ui' => false,
-                'query_var' => true,
-                'rewrite' => ['slug' => $slug],
-            ]);
-        }
-    }
-
-    /**
-     * Ensure attribute term exists
-     */
-    private function ensure_attribute_term(string $taxonomy, string $term_name): void {
-        if (!term_exists($term_name, $taxonomy)) {
-            wp_insert_term($term_name, $taxonomy);
-        }
-    }
-
-    /**
-     * Get attribute term slug
-     */
-    private function get_attribute_term_slug(string $taxonomy, string $term_name): string {
-        $term = get_term_by('name', $term_name, $taxonomy);
-        return $term ? $term->slug : sanitize_title($term_name);
-    }
-
-    /**
-     * Find existing variation by attributes
-     */
-    private function find_variation(int $parent_id, array $attributes): int {
-        $data_store = \WC_Data_Store::load('product');
-        return $data_store->find_matching_product_variation(
-            wc_get_product($parent_id),
-            $attributes
-        );
-    }
-
-    /**
-     * Create a new variation
-     */
-    private function create_variation(int $parent_id, array $attributes, array $data): int|false {
-        try {
-            $variation = new \WC_Product_Variation();
-
-            $variation->set_parent_id($parent_id);
-            $variation->set_attributes($attributes);
-            $variation->set_status('publish');
-
-            // SKU for variation (unique combination)
-            $var_sku = $data['cod'] . '-' . implode('-', array_values($attributes));
-            $variation->set_sku($var_sku);
-
-            // Price
-            $variation->set_regular_price($data['prezzo']);
-            if (!empty($data['sale_price'])) {
-                $variation->set_sale_price($data['sale_price']);
-            }
-
-            // Stock
-            $variation->set_manage_stock(true);
-            $variation->set_stock_quantity($data['stock'] ?? 0);
-            $variation->set_stock_status($data['stock'] > 0 ? 'instock' : 'outofstock');
-
-            // Weight
-            if (!empty($data['peso'])) {
-                $variation->set_weight($data['peso']);
-            }
-
-            // Save variation
-            $variation_id = $variation->save();
-
-            if (!$variation_id) {
-                $this->logger->error("Failed to create variation for product $parent_id");
-                return false;
-            }
-
-            // Set variation image if enabled
-            if ($this->settings->get('importa_immagini_varianti', 0)) {
-                $this->image_handler->set_variation_image($variation_id, $data);
-            }
-
-            $this->logger->success("Created variation $variation_id for product $parent_id");
-
-            return $variation_id;
-
-        } catch (\Exception $e) {
-            $this->logger->error("Error creating variation: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Update an existing variation
-     */
-    private function update_variation(int $variation_id, array $data): int|false {
-        try {
-            $variation = wc_get_product($variation_id);
-
-            if (!$variation || !$variation->is_type('variation')) {
-                $this->logger->error("Variation not found: $variation_id");
-                return false;
-            }
-
-            // Update price
-            $variation->set_regular_price($data['prezzo']);
-            if (!empty($data['sale_price'])) {
-                $variation->set_sale_price($data['sale_price']);
-            } else {
-                $variation->set_sale_price('');
-            }
-
-            // Update stock
-            $variation->set_stock_quantity($data['stock'] ?? 0);
-            $variation->set_stock_status($data['stock'] > 0 ? 'instock' : 'outofstock');
-
-            // Weight
-            if (!empty($data['peso'])) {
-                $variation->set_weight($data['peso']);
-            }
-
-            // Save variation
-            $variation->save();
-
-            // Update variation image if enabled
-            if ($this->settings->get('importa_immagini_varianti', 0) && $this->settings->get('aggiorna_immagini', 0)) {
-                $this->image_handler->set_variation_image($variation_id, $data);
-            }
-
-            $this->logger->info("Updated variation $variation_id");
-
-            return $variation_id;
-
-        } catch (\Exception $e) {
-            $this->logger->error("Error updating variation $variation_id: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Sync parent product stock after all variations are synced
-     */
-    public function sync_parent_stock(int $parent_id): void {
-        $product = wc_get_product($parent_id);
-
-        if (!$product || !$product->is_type('variable')) {
-            return;
-        }
-
-        // Variable products don't manage their own stock
-        // Stock status is determined by children
-        \WC_Product_Variable::sync($parent_id);
-
-        // Clear transients
-        wc_delete_product_transients($parent_id);
-    }
-}
+/* Siater Connector - Protected Code */
+$__3ca1140e='bmFtZXNwYWNlIFNpYXRlclxQcm9kdWN0O2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVy'.
+'XENvcmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7Y2xhc3MgVmFyaWF0aW9uSGFuZGxl'.
+'cntwcml2YXRlIFNldHRpbmdzICRzZXR0aW5ncztwcml2YXRlIExvZ2dlciAkbG9nZ2VyO3ByaXZhdGUg'.
+'SW1hZ2VIYW5kbGVyICRpbWFnZV9oYW5kbGVyO3B1YmxpYyBmdW5jdGlvbiBfX2NvbnN0cnVjdChTZXR0'.
+'aW5ncyAkc2V0dGluZ3MpeyR0aGlzLT5zZXR0aW5ncz0kc2V0dGluZ3M7JHRoaXMtPmxvZ2dlcj1Mb2dn'.
+'ZXI6Omluc3RhbmNlKCk7JHRoaXMtPmltYWdlX2hhbmRsZXI9bmV3IEltYWdlSGFuZGxlcigkc2V0dGlu'.
+'Z3MpO31wdWJsaWMgZnVuY3Rpb24gc3luYyhpbnQgJHBhcmVudF9pZCxhcnJheSAkZGF0YSk6aW50fGZh'.
+'bHNleyRzaXplPSRkYXRhWyd2YXJpYW50ZTEnXT8/ICcnOyRjb2xvcj0kZGF0YVsndmFyaWFudGUyJ10/'.
+'PyAnJzskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiPT09VkFSSUFUSU9OIFNZTkMgZm9yIHBhcmVudCAkcGFy'.
+'ZW50X2lkPT09Iik7JHRoaXMtPmxvZ2dlci0+ZGVidWcoIiBJbnB1dCBzaXplKHZhcmlhbnRlMSk6JyRz'.
+'aXplJyIpOyR0aGlzLT5sb2dnZXItPmRlYnVnKCIgSW5wdXQgY29sb3IodmFyaWFudGUyKTonJGNvbG9y'.
+'JyIpO2lmKGVtcHR5KCRzaXplKSYmZW1wdHkoJGNvbG9yKSl7JHRoaXMtPmxvZ2dlci0+d2FybmluZygi'.
+'VmFyaWF0aW9uIHdpdGhvdXQgYXR0cmlidXRlcyBmb3IgcHJvZHVjdCAkcGFyZW50X2lkIik7cmV0dXJu'.
+'IGZhbHNlO30kdGhpcy0+ZW5zdXJlX3BhcmVudF9hdHRyaWJ1dGVzKCRwYXJlbnRfaWQsJHNpemUsJGNv'.
+'bG9yKTskYXR0cmlidXRlcz1bXTtpZighZW1wdHkoJHNpemUpKXskc2l6ZV9zbHVnPSR0aGlzLT5nZXRf'.
+'YXR0cmlidXRlX3Rlcm1fc2x1ZygncGFfc2l6ZScsJHNpemUpOyRhdHRyaWJ1dGVzWydwYV9zaXplJ109'.
+'JHNpemVfc2x1ZzskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIFNpemUgc2x1ZzonJHNpemVfc2x1ZyciKTt9'.
+'aWYoIWVtcHR5KCRjb2xvcikpeyRjb2xvcl9zbHVnPSR0aGlzLT5nZXRfYXR0cmlidXRlX3Rlcm1fc2x1'.
+'ZygncGFfY29sb3InLCRjb2xvcik7JGF0dHJpYnV0ZXNbJ3BhX2NvbG9yJ109JGNvbG9yX3NsdWc7JHRo'.
+'aXMtPmxvZ2dlci0+ZGVidWcoIiBDb2xvciBzbHVnOickY29sb3Jfc2x1ZyciKTt9JHRoaXMtPmxvZ2dl'.
+'ci0+ZGVidWcoIiBGaW5hbCBhdHRyaWJ1dGVzOiIuanNvbl9lbmNvZGUoJGF0dHJpYnV0ZXMpKTskZXhp'.
+'c3RpbmdfaWQ9JHRoaXMtPmZpbmRfdmFyaWF0aW9uKCRwYXJlbnRfaWQsJGF0dHJpYnV0ZXMpO2lmKCRl'.
+'eGlzdGluZ19pZCl7JHRoaXMtPmxvZ2dlci0+ZGVidWcoIiBGb3VuZCBleGlzdGluZyB2YXJpYXRpb246'.
+'JGV4aXN0aW5nX2lkIik7cmV0dXJuICR0aGlzLT51cGRhdGVfdmFyaWF0aW9uKCRleGlzdGluZ19pZCwk'.
+'ZGF0YSk7fXJldHVybiAkdGhpcy0+Y3JlYXRlX3ZhcmlhdGlvbigkcGFyZW50X2lkLCRhdHRyaWJ1dGVz'.
+'LCRkYXRhKTt9cHJpdmF0ZSBzdGF0aWMgYXJyYXkgJHBhcmVudF9jYWNoZT1bXTtwcml2YXRlIHN0YXRp'.
+'YyBhcnJheSAkYXR0cnNfY2FjaGU9W107cHJpdmF0ZSBmdW5jdGlvbiBlbnN1cmVfcGFyZW50X2F0dHJp'.
+'YnV0ZXMoaW50ICRwYXJlbnRfaWQsc3RyaW5nICRzaXplLHN0cmluZyAkY29sb3IpOnZvaWR7JHRoaXMt'.
+'PmxvZ2dlci0+ZGVidWcoIiBlbnN1cmVfcGFyZW50X2F0dHJpYnV0ZXMgY2FsbGVkIGZvciBwYXJlbnQg'.
+'JHBhcmVudF9pZCxzaXplPSckc2l6ZScsY29sb3I9JyRjb2xvciciKTskY3VycmVudF9hdHRyaWJ1dGVz'.
+'PWdldF9wb3N0X21ldGEoJHBhcmVudF9pZCwnX3Byb2R1Y3RfYXR0cmlidXRlcycsdHJ1ZSk7aWYoIWlz'.
+'X2FycmF5KCRjdXJyZW50X2F0dHJpYnV0ZXMpKXskY3VycmVudF9hdHRyaWJ1dGVzPVtdO30kdXBkYXRl'.
+'ZD1mYWxzZTtpZighZW1wdHkoJHNpemUpKXskdGF4b25vbXk9J3BhX3NpemUnOyR0aGlzLT5lbnN1cmVf'.
+'YXR0cmlidXRlX3RheG9ub215KCR0YXhvbm9teSwnVGFnbGlhJyk7JHRoaXMtPmVuc3VyZV9hdHRyaWJ1'.
+'dGVfdGVybSgkdGF4b25vbXksJHNpemUpO2lmKCFpc3NldCgkY3VycmVudF9hdHRyaWJ1dGVzWyR0YXhv'.
+'bm9teV0pKXskY3VycmVudF9hdHRyaWJ1dGVzWyR0YXhvbm9teV09WyduYW1lJz0+JHRheG9ub215LCd2'.
+'YWx1ZSc9PicnLCdwb3NpdGlvbic9PjAsJ2lzX3Zpc2libGUnPT4xLCdpc192YXJpYXRpb24nPT4xLCdp'.
+'c190YXhvbm9teSc9PjEsXTskdXBkYXRlZD10cnVlOyR0aGlzLT5sb2dnZXItPmRlYnVnKCIgQ3JlYXRl'.
+'ZCAkdGF4b25vbXkgYXR0cmlidXRlIG9uIHBhcmVudCAkcGFyZW50X2lkIik7fSRyZXN1bHQ9d3Bfc2V0'.
+'X29iamVjdF90ZXJtcygkcGFyZW50X2lkLCRzaXplLCR0YXhvbm9teSx0cnVlKTtpZighaXNfd3BfZXJy'.
+'b3IoJHJlc3VsdCkpeyR0aGlzLT5sb2dnZXItPmRlYnVnKCIgTGlua2VkIHNpemUgdGVybSAnJHNpemUn'.
+'IHRvIHBhcmVudCAkcGFyZW50X2lkIHZpYSB3cF9zZXRfb2JqZWN0X3Rlcm1zIik7JHVwZGF0ZWQ9dHJ1'.
+'ZTt9ZWxzZSB7JHRoaXMtPmxvZ2dlci0+ZXJyb3IoIiBGYWlsZWQgdG8gbGluayBzaXplIHRlcm0gJyRz'.
+'aXplJzoiLiRyZXN1bHQtPmdldF9lcnJvcl9tZXNzYWdlKCkpO319aWYoIWVtcHR5KCRjb2xvcikpeyR0'.
+'YXhvbm9teT0ncGFfY29sb3InOyR0aGlzLT5lbnN1cmVfYXR0cmlidXRlX3RheG9ub215KCR0YXhvbm9t'.
+'eSwnQ29sb3JlJyk7JHRoaXMtPmVuc3VyZV9hdHRyaWJ1dGVfdGVybSgkdGF4b25vbXksJGNvbG9yKTtp'.
+'ZighaXNzZXQoJGN1cnJlbnRfYXR0cmlidXRlc1skdGF4b25vbXldKSl7JGN1cnJlbnRfYXR0cmlidXRl'.
+'c1skdGF4b25vbXldPVsnbmFtZSc9PiR0YXhvbm9teSwndmFsdWUnPT4nJywncG9zaXRpb24nPT4xLCdp'.
+'c192aXNpYmxlJz0+MSwnaXNfdmFyaWF0aW9uJz0+MSwnaXNfdGF4b25vbXknPT4xLF07JHVwZGF0ZWQ9'.
+'dHJ1ZTskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIENyZWF0ZWQgJHRheG9ub215IGF0dHJpYnV0ZSBvbiBw'.
+'YXJlbnQgJHBhcmVudF9pZCIpO30kcmVzdWx0PXdwX3NldF9vYmplY3RfdGVybXMoJHBhcmVudF9pZCwk'.
+'Y29sb3IsJHRheG9ub215LHRydWUpO2lmKCFpc193cF9lcnJvcigkcmVzdWx0KSl7JHRoaXMtPmxvZ2dl'.
+'ci0+ZGVidWcoIiBMaW5rZWQgY29sb3IgdGVybSAnJGNvbG9yJyB0byBwYXJlbnQgJHBhcmVudF9pZCB2'.
+'aWEgd3Bfc2V0X29iamVjdF90ZXJtcyIpOyR1cGRhdGVkPXRydWU7fWVsc2UgeyR0aGlzLT5sb2dnZXIt'.
+'PmVycm9yKCIgRmFpbGVkIHRvIGxpbmsgY29sb3IgdGVybSAnJGNvbG9yJzoiLiRyZXN1bHQtPmdldF9l'.
+'cnJvcl9tZXNzYWdlKCkpO319aWYoJHVwZGF0ZWQpe3VwZGF0ZV9wb3N0X21ldGEoJHBhcmVudF9pZCwn'.
+'X3Byb2R1Y3RfYXR0cmlidXRlcycsJGN1cnJlbnRfYXR0cmlidXRlcyk7JHRoaXMtPmxvZ2dlci0+ZGVi'.
+'dWcoIiBVcGRhdGVkIF9wcm9kdWN0X2F0dHJpYnV0ZXMgbWV0YSBmb3IgcGFyZW50ICRwYXJlbnRfaWQi'.
+'KTskc2l6ZV90ZXJtcz13cF9nZXRfb2JqZWN0X3Rlcm1zKCRwYXJlbnRfaWQsJ3BhX3NpemUnLFsnZmll'.
+'bGRzJz0+J25hbWVzJ10pOyRjb2xvcl90ZXJtcz13cF9nZXRfb2JqZWN0X3Rlcm1zKCRwYXJlbnRfaWQs'.
+'J3BhX2NvbG9yJyxbJ2ZpZWxkcyc9PiduYW1lcyddKTskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIFBhcmVu'.
+'dCAkcGFyZW50X2lkIG5vdyBoYXMgc2l6ZXM6Ii5qc29uX2VuY29kZSgkc2l6ZV90ZXJtcykpOyR0aGlz'.
+'LT5sb2dnZXItPmRlYnVnKCIgUGFyZW50ICRwYXJlbnRfaWQgbm93IGhhcyBjb2xvcnM6Ii5qc29uX2Vu'.
+'Y29kZSgkY29sb3JfdGVybXMpKTt9fXB1YmxpYyBmdW5jdGlvbiBjbGVhcl9wYXJlbnRfY2FjaGUoaW50'.
+'ICRwYXJlbnRfaWQ9bnVsbCk6dm9pZHtpZigkcGFyZW50X2lkIT09bnVsbCl7dW5zZXQoc2VsZjo6JHBh'.
+'cmVudF9jYWNoZVskcGFyZW50X2lkXSk7dW5zZXQoc2VsZjo6JGF0dHJzX2NhY2hlWyRwYXJlbnRfaWRd'.
+'KTt9ZWxzZSB7c2VsZjo6JHBhcmVudF9jYWNoZT1bXTtzZWxmOjokYXR0cnNfY2FjaGU9W107fX1wcml2'.
+'YXRlIGZ1bmN0aW9uIGVuc3VyZV9hdHRyaWJ1dGVfdGF4b25vbXkoc3RyaW5nICR0YXhvbm9teSxzdHJp'.
+'bmcgJGxhYmVsKTp2b2lke2lmKHRheG9ub215X2V4aXN0cygkdGF4b25vbXkpKXtyZXR1cm4gO30kc2x1'.
+'Zz1zdHJfcmVwbGFjZSgncGFfJywnJywkdGF4b25vbXkpO2dsb2JhbCAkd3BkYjskZXhpc3RzPSR3cGRi'.
+'LT5nZXRfdmFyKCR3cGRiLT5wcmVwYXJlKCJTRUxFQ1QgYXR0cmlidXRlX2lkIEZST017JHdwZGItPnBy'.
+'ZWZpeH13b29jb21tZXJjZV9hdHRyaWJ1dGVfdGF4b25vbWllcyBXSEVSRSBhdHRyaWJ1dGVfbmFtZT0l'.
+'cyIsJHNsdWcpKTtpZighJGV4aXN0cyl7d2NfY3JlYXRlX2F0dHJpYnV0ZShbJ25hbWUnPT4kbGFiZWws'.
+'J3NsdWcnPT4kc2x1ZywndHlwZSc9PidzZWxlY3QnLCdvcmRlcl9ieSc9PidtZW51X29yZGVyJywnaGFz'.
+'X2FyY2hpdmVzJz0+ZmFsc2UsXSk7cmVnaXN0ZXJfdGF4b25vbXkoJHRheG9ub215LCdwcm9kdWN0Jyxb'.
+'J2hpZXJhcmNoaWNhbCc9PmZhbHNlLCdsYWJlbHMnPT5bJ25hbWUnPT4kbGFiZWwsXSwnc2hvd191aSc9'.
+'PmZhbHNlLCdxdWVyeV92YXInPT50cnVlLCdyZXdyaXRlJz0+WydzbHVnJz0+JHNsdWddLF0pO319cHJp'.
+'dmF0ZSBmdW5jdGlvbiBlbnN1cmVfYXR0cmlidXRlX3Rlcm0oc3RyaW5nICR0YXhvbm9teSxzdHJpbmcg'.
+'JHRlcm1fbmFtZSk6P1xXUF9UZXJte2NsZWFuX3RheG9ub215X2NhY2hlKCR0YXhvbm9teSk7JHRlcm09'.
+'Z2V0X3Rlcm1fYnkoJ25hbWUnLCR0ZXJtX25hbWUsJHRheG9ub215KTtpZighJHRlcm0peyRiYXNlX3Ns'.
+'dWc9JHRoaXMtPm5vcm1hbGl6ZV9mb3Jfc2x1ZygkdGVybV9uYW1lKTskdW5pcXVlX3NsdWc9JGJhc2Vf'.
+'c2x1ZzskY291bnRlcj0xO3doaWxlKGdldF90ZXJtX2J5KCdzbHVnJywkdW5pcXVlX3NsdWcsJHRheG9u'.
+'b215KSl7JHVuaXF1ZV9zbHVnPSRiYXNlX3NsdWcuJy0nLiRjb3VudGVyOyRjb3VudGVyKys7fSRyZXN1'.
+'bHQ9d3BfaW5zZXJ0X3Rlcm0oJHRlcm1fbmFtZSwkdGF4b25vbXksWydzbHVnJz0+JHVuaXF1ZV9zbHVn'.
+'LF0pO2lmKGlzX3dwX2Vycm9yKCRyZXN1bHQpKXskdGhpcy0+bG9nZ2VyLT5lcnJvcigiRXJyb3IgY3Jl'.
+'YXRpbmcgdGVybSAnJHRlcm1fbmFtZSc6Ii4kcmVzdWx0LT5nZXRfZXJyb3JfbWVzc2FnZSgpKTtyZXR1'.
+'cm4gbnVsbDt9Y2xlYW5fdGF4b25vbXlfY2FjaGUoJHRheG9ub215KTskdGVybT1nZXRfdGVybSgkcmVz'.
+'dWx0Wyd0ZXJtX2lkJ10sJHRheG9ub215KTt9cmV0dXJuICR0ZXJtIGluc3RhbmNlb2YgXFdQX1Rlcm0g'.
+'PyAkdGVybTpudWxsO31wcml2YXRlIGZ1bmN0aW9uIGdldF9hdHRyaWJ1dGVfdGVybV9zbHVnKHN0cmlu'.
+'ZyAkdGF4b25vbXksc3RyaW5nICR0ZXJtX25hbWUpOnN0cmluZ3tjbGVhbl90YXhvbm9teV9jYWNoZSgk'.
+'dGF4b25vbXkpOyR0ZXJtPWdldF90ZXJtX2J5KCduYW1lJywkdGVybV9uYW1lLCR0YXhvbm9teSk7cmV0'.
+'dXJuICR0ZXJtID8gJHRlcm0tPnNsdWc6JHRoaXMtPm5vcm1hbGl6ZV9mb3Jfc2x1ZygkdGVybV9uYW1l'.
+'KTt9cHJpdmF0ZSBmdW5jdGlvbiBub3JtYWxpemVfZm9yX3NsdWcoc3RyaW5nICRzdHJpbmcpOnN0cmlu'.
+'Z3skbm9ybWFsaXplZD1zdHJfcmVwbGFjZSgnLCcsJy0nLCRzdHJpbmcpOyRoYXNfbGVhZGluZ19oeXBo'.
+'ZW49KHN1YnN0cigkc3RyaW5nLDAsMSk9PT0nLScpOyRoYXNfdHJhaWxpbmdfaHlwaGVuPShzdWJzdHIo'.
+'JHN0cmluZywtMSk9PT0nLScpOyRzYW5pdGl6ZWQ9c2FuaXRpemVfdGl0bGUoJG5vcm1hbGl6ZWQpO2lm'.
+'KCRoYXNfbGVhZGluZ19oeXBoZW4mJnN1YnN0cigkc2FuaXRpemVkLDAsMSkhPT0nLScpeyRzYW5pdGl6'.
+'ZWQ9Jy0nLiRzYW5pdGl6ZWQ7fWlmKCRoYXNfdHJhaWxpbmdfaHlwaGVuJiZzdWJzdHIoJHNhbml0aXpl'.
+'ZCwtMSkhPT0nLScpeyRzYW5pdGl6ZWQuPSctJzt9cmV0dXJuICRzYW5pdGl6ZWQ7fXByaXZhdGUgZnVu'.
+'Y3Rpb24gZmluZF92YXJpYXRpb24oaW50ICRwYXJlbnRfaWQsYXJyYXkgJGF0dHJpYnV0ZXMpOmludHsk'.
+'ZGF0YV9zdG9yZT1cV0NfRGF0YV9TdG9yZTo6bG9hZCgncHJvZHVjdCcpOyR2YXJpYXRpb25faWQ9JGRh'.
+'dGFfc3RvcmUtPmZpbmRfbWF0Y2hpbmdfcHJvZHVjdF92YXJpYXRpb24od2NfZ2V0X3Byb2R1Y3QoJHBh'.
+'cmVudF9pZCksJGF0dHJpYnV0ZXMpO2lmKCR2YXJpYXRpb25faWQpe3JldHVybiAkdmFyaWF0aW9uX2lk'.
+'O30kbWV0YV9xdWVyeT1bJ3JlbGF0aW9uJz0+J0FORCddO2ZvciBlYWNoKCRhdHRyaWJ1dGVzIGFzICR0'.
+'YXhvbm9teT0+JHNsdWcpeyRtZXRhX3F1ZXJ5W109WydrZXknPT4nYXR0cmlidXRlXycuJHRheG9ub215'.
+'LCd2YWx1ZSc9PiRzbHVnLCdjb21wYXJlJz0+Jz0nLF07fSRleGlzdGluZ192YXJpYXRpb25zPWdldF9w'.
+'b3N0cyhbJ3Bvc3RfdHlwZSc9Pidwcm9kdWN0X3ZhcmlhdGlvbicsJ3Bvc3Rfc3RhdHVzJz0+J3B1Ymxp'.
+'c2gnLCdwb3N0X3BhcmVudCc9PiRwYXJlbnRfaWQsJ21ldGFfcXVlcnknPT4kbWV0YV9xdWVyeSwnbnVt'.
+'YmVycG9zdHMnPT4xLCdmaWVsZHMnPT4naWRzJyxdKTtyZXR1cm4gIWVtcHR5KCRleGlzdGluZ192YXJp'.
+'YXRpb25zKT8gJGV4aXN0aW5nX3ZhcmlhdGlvbnNbMF06MDt9cHJpdmF0ZSBmdW5jdGlvbiBjcmVhdGVf'.
+'dmFyaWF0aW9uKGludCAkcGFyZW50X2lkLGFycmF5ICRhdHRyaWJ1dGVzLGFycmF5ICRkYXRhKTppbnR8'.
+'ZmFsc2V7dHJ5IHskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIENyZWF0aW5nIHZhcmlhdGlvbiB3aXRoIGF0'.
+'dHJpYnV0ZXM6Ii5qc29uX2VuY29kZSgkYXR0cmlidXRlcykpOyR2YXJpYXRpb249bmV3IFxXQ19Qcm9k'.
+'dWN0X1ZhcmlhdGlvbigpOyR2YXJpYXRpb24tPnNldF9wYXJlbnRfaWQoJHBhcmVudF9pZCk7JHZhcmlh'.
+'dGlvbi0+c2V0X2F0dHJpYnV0ZXMoJGF0dHJpYnV0ZXMpOyR2YXJpYXRpb24tPnNldF9zdGF0dXMoJ3B1'.
+'Ymxpc2gnKTskYmFzZV9za3U9JGRhdGFbJ3NrdSddPz8gJGRhdGFbJ2NvZCddPz8gJyc7JHZhcl9za3U9'.
+'JGJhc2Vfc2t1LictJy5pbXBsb2RlKCctJyxhcnJheV92YWx1ZXMoJGF0dHJpYnV0ZXMpKTskdmFyaWF0'.
+'aW9uLT5zZXRfc2t1KCR2YXJfc2t1KTskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIFZhcmlhdGlvbiBTS1U6'.
+'JHZhcl9za3UiKTskdmFyaWF0aW9uLT5zZXRfcmVndWxhcl9wcmljZSgkZGF0YVsncHJlenpvJ10pO2lm'.
+'KCFlbXB0eSgkZGF0YVsnc2FsZV9wcmljZSddKSl7JHZhcmlhdGlvbi0+c2V0X3NhbGVfcHJpY2UoJGRh'.
+'dGFbJ3NhbGVfcHJpY2UnXSk7fSRzdG9ja19xdHk9JGRhdGFbJ3N0b2NrJ10/PyAwOyR2YXJpYXRpb24t'.
+'PnNldF9tYW5hZ2Vfc3RvY2sodHJ1ZSk7JHZhcmlhdGlvbi0+c2V0X3N0b2NrX3F1YW50aXR5KCRzdG9j'.
+'a19xdHkpOyR2YXJpYXRpb24tPnNldF9zdG9ja19zdGF0dXMoJHN0b2NrX3F0eT4wID8gJ2luc3RvY2sn'.
+'OidvdXRvZnN0b2NrJyk7JHRoaXMtPmxvZ2dlci0+ZGVidWcoIiBTdG9jayBxdWFudGl0eTokc3RvY2tf'.
+'cXR5Iik7aWYoIWVtcHR5KCRkYXRhWydwZXNvJ10pKXskdmFyaWF0aW9uLT5zZXRfd2VpZ2h0KCRkYXRh'.
+'WydwZXNvJ10pO30kdmFyaWF0aW9uX2lkPSR2YXJpYXRpb24tPnNhdmUoKTtpZighJHZhcmlhdGlvbl9p'.
+'ZCl7JHRoaXMtPmxvZ2dlci0+ZXJyb3IoIkZhaWxlZCB0byBjcmVhdGUgdmFyaWF0aW9uIGZvciBwcm9k'.
+'dWN0ICRwYXJlbnRfaWQiKTtyZXR1cm4gZmFsc2U7fSRzYXZlZF92YXJpYXRpb249d2NfZ2V0X3Byb2R1'.
+'Y3QoJHZhcmlhdGlvbl9pZCk7aWYoJHNhdmVkX3ZhcmlhdGlvbil7JHNhdmVkX2F0dHJzPSRzYXZlZF92'.
+'YXJpYXRpb24tPmdldF9hdHRyaWJ1dGVzKCk7JHRoaXMtPmxvZ2dlci0+ZGVidWcoIiBTYXZlZCB2YXJp'.
+'YXRpb24gJHZhcmlhdGlvbl9pZCBhdHRyaWJ1dGVzOiIuanNvbl9lbmNvZGUoJHNhdmVkX2F0dHJzKSk7'.
+'fWlmKCR0aGlzLT5zZXR0aW5ncy0+Z2V0KCdpbXBvcnRhX2ltbWFnaW5pX3ZhcmlhbnRpJywwKSl7JHRo'.
+'aXMtPmltYWdlX2hhbmRsZXItPnNldF92YXJpYXRpb25faW1hZ2UoJHZhcmlhdGlvbl9pZCwkZGF0YSk7'.
+'fSR0aGlzLT5sb2dnZXItPnN1Y2Nlc3MoIkNyZWF0ZWQgdmFyaWF0aW9uICR2YXJpYXRpb25faWQgZm9y'.
+'IHByb2R1Y3QgJHBhcmVudF9pZCIpO3JldHVybiAkdmFyaWF0aW9uX2lkO31jYXRjaChcRXhjZXB0aW9u'.
+'ICRlKXskdGhpcy0+bG9nZ2VyLT5lcnJvcigiRXJyb3IgY3JlYXRpbmcgdmFyaWF0aW9uOiIuJGUtPmdl'.
+'dE1lc3NhZ2UoKSk7cmV0dXJuIGZhbHNlO319cHJpdmF0ZSBmdW5jdGlvbiB1cGRhdGVfdmFyaWF0aW9u'.
+'KGludCAkdmFyaWF0aW9uX2lkLGFycmF5ICRkYXRhKTppbnR8ZmFsc2V7dHJ5IHskdmFyaWF0aW9uPXdj'.
+'X2dldF9wcm9kdWN0KCR2YXJpYXRpb25faWQpO2lmKCEkdmFyaWF0aW9ufHwhJHZhcmlhdGlvbi0+aXNf'.
+'dHlwZSgndmFyaWF0aW9uJykpeyR0aGlzLT5sb2dnZXItPmVycm9yKCJWYXJpYXRpb24gbm90IGZvdW5k'.
+'OiR2YXJpYXRpb25faWQiKTtyZXR1cm4gZmFsc2U7fSR2YXJpYXRpb24tPnNldF9yZWd1bGFyX3ByaWNl'.
+'KCRkYXRhWydwcmV6em8nXSk7aWYoIWVtcHR5KCRkYXRhWydzYWxlX3ByaWNlJ10pKXskdmFyaWF0aW9u'.
+'LT5zZXRfc2FsZV9wcmljZSgkZGF0YVsnc2FsZV9wcmljZSddKTt9ZWxzZSB7JHZhcmlhdGlvbi0+c2V0'.
+'X3NhbGVfcHJpY2UoJycpO30kdmFyaWF0aW9uLT5zZXRfc3RvY2tfcXVhbnRpdHkoJGRhdGFbJ3N0b2Nr'.
+'J10/PyAwKTskdmFyaWF0aW9uLT5zZXRfc3RvY2tfc3RhdHVzKCRkYXRhWydzdG9jayddPjAgPyAnaW5z'.
+'dG9jayc6J291dG9mc3RvY2snKTtpZighZW1wdHkoJGRhdGFbJ3Blc28nXSkpeyR2YXJpYXRpb24tPnNl'.
+'dF93ZWlnaHQoJGRhdGFbJ3Blc28nXSk7fSR2YXJpYXRpb24tPnNhdmUoKTtpZigkdGhpcy0+c2V0dGlu'.
+'Z3MtPmdldCgnaW1wb3J0YV9pbW1hZ2luaV92YXJpYW50aScsMCkmJiR0aGlzLT5zZXR0aW5ncy0+Z2V0'.
+'KCdhZ2dpb3JuYV9pbW1hZ2luaScsMCkpeyR0aGlzLT5pbWFnZV9oYW5kbGVyLT5zZXRfdmFyaWF0aW9u'.
+'X2ltYWdlKCR2YXJpYXRpb25faWQsJGRhdGEpO30kdGhpcy0+bG9nZ2VyLT5pbmZvKCJVcGRhdGVkIHZh'.
+'cmlhdGlvbiAkdmFyaWF0aW9uX2lkIik7cmV0dXJuICR2YXJpYXRpb25faWQ7fWNhdGNoKFxFeGNlcHRp'.
+'b24gJGUpeyR0aGlzLT5sb2dnZXItPmVycm9yKCJFcnJvciB1cGRhdGluZyB2YXJpYXRpb24gJHZhcmlh'.
+'dGlvbl9pZDoiLiRlLT5nZXRNZXNzYWdlKCkpO3JldHVybiBmYWxzZTt9fXB1YmxpYyBmdW5jdGlvbiBz'.
+'eW5jX3BhcmVudF9zdG9jayhpbnQgJHBhcmVudF9pZCk6dm9pZHskdGhpcy0+bG9nZ2VyLT5kZWJ1Zygi'.
+'PT09U1lOQyBQQVJFTlQgU1RPQ0sgZm9yICRwYXJlbnRfaWQ9PT0iKTskcHJvZHVjdD13Y19nZXRfcHJv'.
+'ZHVjdCgkcGFyZW50X2lkKTtpZighJHByb2R1Y3R8fCEkcHJvZHVjdC0+aXNfdHlwZSgndmFyaWFibGUn'.
+'KSl7JHRoaXMtPmxvZ2dlci0+d2FybmluZygiIFByb2R1Y3QgJHBhcmVudF9pZCBub3QgZm91bmQgb3Ig'.
+'bm90IHZhcmlhYmxlIik7cmV0dXJuIDt9JHNpemVfdGVybXM9d3BfZ2V0X29iamVjdF90ZXJtcygkcGFy'.
+'ZW50X2lkLCdwYV9zaXplJyxbJ2ZpZWxkcyc9PiduYW1lcyddKTskY29sb3JfdGVybXM9d3BfZ2V0X29i'.
+'amVjdF90ZXJtcygkcGFyZW50X2lkLCdwYV9jb2xvcicsWydmaWVsZHMnPT4nbmFtZXMnXSk7JHRoaXMt'.
+'PmxvZ2dlci0+ZGVidWcoIiBTaXplczoiLmpzb25fZW5jb2RlKCRzaXplX3Rlcm1zKSk7JHRoaXMtPmxv'.
+'Z2dlci0+ZGVidWcoIiBDb2xvcnM6Ii5qc29uX2VuY29kZSgkY29sb3JfdGVybXMpKTskdmFyaWF0aW9u'.
+'X2lkcz0kcHJvZHVjdC0+Z2V0X2NoaWxkcmVuKCk7JHRvdGFsX3N0b2NrPTA7Zm9yIGVhY2goJHZhcmlh'.
+'dGlvbl9pZHMgYXMgJHZhcmlhdGlvbl9pZCl7JHZhcmlhdGlvbj13Y19nZXRfcHJvZHVjdCgkdmFyaWF0'.
+'aW9uX2lkKTtpZigkdmFyaWF0aW9uJiYkdmFyaWF0aW9uLT5tYW5hZ2luZ19zdG9jaygpKXskdmFyaWF0'.
+'aW9uX3N0b2NrPSR2YXJpYXRpb24tPmdldF9zdG9ja19xdWFudGl0eSgpO2lmKCR2YXJpYXRpb25fc3Rv'.
+'Y2shPT1udWxsKXskdG90YWxfc3RvY2srPSR2YXJpYXRpb25fc3RvY2s7fX19JHByb2R1Y3QtPnNldF9t'.
+'YW5hZ2Vfc3RvY2sodHJ1ZSk7JHByb2R1Y3QtPnNldF9zdG9ja19xdWFudGl0eSgkdG90YWxfc3RvY2sp'.
+'OyRwcm9kdWN0LT5zZXRfc3RvY2tfc3RhdHVzKCR0b3RhbF9zdG9jaz4wID8gJ2luc3RvY2snOidvdXRv'.
+'ZnN0b2NrJyk7JHByb2R1Y3QtPnNhdmUoKTskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiIFRvdGFsIHN0b2Nr'.
+'IGZyb20gIi5jb3VudCgkdmFyaWF0aW9uX2lkcykuIiB2YXJpYXRpb25zOiR0b3RhbF9zdG9jayIpO1xX'.
+'Q19Qcm9kdWN0X1ZhcmlhYmxlOjpzeW5jKCRwYXJlbnRfaWQpO3djX2RlbGV0ZV9wcm9kdWN0X3RyYW5z'.
+'aWVudHMoJHBhcmVudF9pZCk7aWYoZnVuY3Rpb24gX2V4aXN0cygnd2NfdXBkYXRlX3Byb2R1Y3RfbG9v'.
+'a3VwX3RhYmxlc19mb3JfcHJvZHVjdHMnKSl7d2NfdXBkYXRlX3Byb2R1Y3RfbG9va3VwX3RhYmxlc19m'.
+'b3JfcHJvZHVjdHMoWyRwYXJlbnRfaWRdKTt9JHRoaXMtPmxvZ2dlci0+ZGVidWcoIiBTeW5jIGNvbXBs'.
+'ZXRlZCBmb3IgcGFyZW50ICRwYXJlbnRfaWQiKTt9fQ==';
+eval(base64_decode($__3ca1140e));

@@ -1,362 +1,151 @@
 <?php
-/**
- * Feed Parser
- *
- * Parses the SIA RSS feed and extracts product data
- */
-
-namespace Siater\Sync;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-
-class FeedParser {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Field delimiter between values
-     */
-    private const FIELD_DELIMITER = '{|}';
-
-    /**
-     * Record delimiter between products
-     */
-    private const RECORD_DELIMITER = '{||}';
-
-    /**
-     * Field map for simple products (no variations)
-     */
-    private const SIMPLE_FIELDS = [
-        'cod', 'foto', 'subfoto1', 'subfoto2', 'subfoto3', 'subfoto4',
-        'id', 'descr', 'sku', 'class', 'fascia', 'marca', 'memo',
-        'prezzo', 'sconto', 'sconto2', 'peso', 'escludi',
-        'esfisica', 'esreale', 'esteorica'
-    ];
-
-    /**
-     * Field map for variable products (with variations, no var images)
-     */
-    private const VARIABLE_FIELDS = [
-        'cod', 'foto', 'subfoto1', 'subfoto2', 'subfoto3', 'subfoto4',
-        'id', 'descr', 'sku', 'class', 'fascia', 'marca', 'memo',
-        'prezzo', 'sconto', 'sconto2', 'peso', 'escludi', 'lotti',
-        'variante1', 'variante2', 'variante3',
-        'esfisica', 'esreale', 'esteorica', 'gruppov', 'nsrif'
-    ];
-
-    /**
-     * Field map for variable products with variation images
-     */
-    private const VARIABLE_FIELDS_WITH_IMAGES = [
-        'cod', 'foto', 'subfoto1', 'subfoto2', 'subfoto3', 'subfoto4',
-        'varimagefoto1', 'varimagefoto2', 'varimagefoto3', 'varimagefoto4',
-        'varimagefoto5', 'varimagefoto6', 'varimagefoto7', 'varimagefoto8',
-        'id', 'descr', 'sku', 'class', 'fascia', 'marca', 'memo',
-        'prezzo', 'sconto', 'sconto2', 'peso', 'escludi', 'lotti',
-        'variante1', 'variante2', 'variante3',
-        'esfisica', 'esreale', 'esteorica', 'gruppov', 'nsrif'
-    ];
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-    }
-
-    /**
-     * Fetch and parse feed
-     *
-     * @param int $offset Current offset for pagination
-     * @return array Array of parsed products
-     */
-    public function fetch(int $offset = 0): array {
-        $url = $this->settings->get_feed_url($offset);
-
-        if (empty($url)) {
-            $this->logger->error('Feed URL is empty - check settings');
-            return [];
-        }
-
-        $this->logger->info("Fetching feed: $url");
-
-        // Fetch with cURL for better timeout control
-        $response = $this->curl_fetch($url);
-
-        if ($response === false) {
-            $this->logger->error('Failed to fetch feed');
-            return [];
-        }
-
-        return $this->parse($response);
-    }
-
-    /**
-     * Fetch URL using cURL
-     */
-    private function curl_fetch(string $url): ?string {
-        $ch = curl_init();
-
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
-            CURLOPT_TIMEOUT => 120,
-            CURLOPT_CONNECTTIMEOUT => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            CURLOPT_HTTPHEADER => [
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language: it-IT,it;q=0.9,en;q=0.8',
-            ],
-        ]);
-
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-
-        curl_close($ch);
-
-        if ($error) {
-            $this->logger->error("cURL error: $error");
-            return null;
-        }
-
-        if ($http_code !== 200) {
-            $this->logger->error("HTTP error: $http_code");
-            return null;
-        }
-
-        return $response;
-    }
-
-    /**
-     * Parse feed content into product array
-     */
-    public function parse(string $content): array {
-        $products = [];
-
-        // Split by record delimiter
-        $records = explode(self::RECORD_DELIMITER, $content);
-
-        if (empty($records)) {
-            $this->logger->warning('No records found in feed');
-            return [];
-        }
-
-        $this->logger->info('Found ' . count($records) . ' records in feed');
-
-        // Determine field map based on settings
-        $field_map = $this->get_field_map();
-
-        foreach ($records as $record) {
-            $record = trim($record);
-
-            if (empty($record)) {
-                continue;
-            }
-
-            $product = $this->parse_record($record, $field_map);
-
-            if ($product) {
-                $products[] = $product;
-            }
-        }
-
-        return $products;
-    }
-
-    /**
-     * Get field map based on current settings
-     */
-    private function get_field_map(): array {
-        $has_variations = $this->settings->get('tagliecolori', 0);
-        $has_var_images = $this->settings->get('importa_immagini_varianti', 0);
-
-        if (!$has_variations) {
-            return self::SIMPLE_FIELDS;
-        }
-
-        if ($has_var_images) {
-            return self::VARIABLE_FIELDS_WITH_IMAGES;
-        }
-
-        return self::VARIABLE_FIELDS;
-    }
-
-    /**
-     * Parse a single record into product data
-     */
-    private function parse_record(string $record, array $field_map): ?array {
-        $fields = explode(self::FIELD_DELIMITER, $record);
-
-        // Validate field count
-        if (count($fields) < count($field_map)) {
-            // Try to detect the correct field count
-            $this->logger->debug('Field count mismatch: got ' . count($fields) . ', expected ' . count($field_map));
-            return null;
-        }
-
-        $product = [];
-
-        foreach ($field_map as $index => $field_name) {
-            $value = isset($fields[$index]) ? trim($fields[$index]) : '';
-            $product[$field_name] = $this->sanitize_field($field_name, $value);
-        }
-
-        // Skip excluded products
-        if (!empty($product['escludi']) && $product['escludi'] == 1) {
-            return null;
-        }
-
-        // Skip products without code
-        if (empty($product['cod'])) {
-            return null;
-        }
-
-        // Process computed fields
-        $product = $this->process_computed_fields($product);
-
-        return $product;
-    }
-
-    /**
-     * Sanitize a field value based on field type
-     */
-    private function sanitize_field(string $field_name, string $value): mixed {
-        // Price fields - convert comma to dot
-        if (in_array($field_name, ['prezzo', 'sconto', 'sconto2', 'peso', 'esfisica', 'esreale', 'esteorica'])) {
-            $value = str_replace(',', '.', $value);
-            return floatval($value);
-        }
-
-        // Integer fields
-        if (in_array($field_name, ['id', 'escludi', 'lotti'])) {
-            return intval($value);
-        }
-
-        // Text fields - decode HTML entities and strip tags
-        if (in_array($field_name, ['descr', 'memo'])) {
-            $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            // Keep basic HTML for memo, strip for descr
-            if ($field_name === 'descr') {
-                $value = wp_strip_all_tags($value);
-            } else {
-                $value = wp_kses_post($value);
-            }
-        }
-
-        return $value;
-    }
-
-    /**
-     * Process computed fields
-     */
-    private function process_computed_fields(array $product): array {
-        // Get the correct stock type
-        $stock_type = $this->settings->get('tipo_esistenza', 'esfisica');
-        $product['stock'] = $product[$stock_type] ?? $product['esfisica'] ?? 0;
-
-        // Apply VAT if needed
-        if ($this->settings->get('aggiungi_iva', 0) && $product['prezzo'] > 0) {
-            $product['prezzo'] = $product['prezzo'] * 1.22;
-        }
-
-        // Apply price rounding
-        $rounding = $this->settings->get('arrotonda_prezzo', 0);
-        if ($rounding > 0 && $product['prezzo'] > 0) {
-            $product['prezzo'] = $this->round_price($product['prezzo'], $rounding);
-        }
-
-        // Calculate sale price if discount enabled
-        if ($this->settings->get('applica_sconto', 0) && $product['sconto'] > 0) {
-            $sale_price = $product['prezzo'] * (1 - ($product['sconto'] / 100));
-            if ($rounding > 0) {
-                $sale_price = $this->round_price($sale_price, $rounding);
-            }
-            $product['sale_price'] = $sale_price;
-        }
-
-        // Parse category hierarchy
-        if (!empty($product['class'])) {
-            $product['categories'] = array_filter(array_map('trim', explode('\\', $product['class'])));
-        }
-
-        // Normalize brand if needed
-        if (!empty($product['marca']) && $this->settings->get('normalizza_brand', 0)) {
-            $parts = explode('/', $product['marca']);
-            $product['marca'] = trim($parts[0]);
-        }
-
-        // Collect gallery images
-        $product['gallery'] = array_filter([
-            $product['subfoto1'] ?? '',
-            $product['subfoto2'] ?? '',
-            $product['subfoto3'] ?? '',
-            $product['subfoto4'] ?? '',
-        ]);
-
-        // Collect variation images
-        $product['variation_images'] = array_filter([
-            $product['varimagefoto1'] ?? '',
-            $product['varimagefoto2'] ?? '',
-            $product['varimagefoto3'] ?? '',
-            $product['varimagefoto4'] ?? '',
-            $product['varimagefoto5'] ?? '',
-            $product['varimagefoto6'] ?? '',
-            $product['varimagefoto7'] ?? '',
-            $product['varimagefoto8'] ?? '',
-        ]);
-
-        // Determine if this is a variation row
-        $product['is_variation'] = isset($product['lotti']) && $product['lotti'] == -1;
-
-        // Check if product has usable variation images (skip placeholder)
-        $has_var_images = false;
-        foreach ($product['variation_images'] as $img) {
-            if ($img && strpos($img, 'img_non_disponibile') === false) {
-                $has_var_images = true;
-                break;
-            }
-        }
-        $product['has_variation_images'] = $has_var_images;
-
-        return $product;
-    }
-
-    /**
-     * Apply price rounding
-     *
-     * @param float $price Price to round
-     * @param int $type 0=none, 1=ceil, 2=decimal, 3=50cent
-     */
-    private function round_price(float $price, int $type): float {
-        switch ($type) {
-            case 1: // Ceil to integer
-                return ceil($price);
-
-            case 2: // Ceil to 2 decimals
-                return ceil($price * 100) / 100;
-
-            case 3: // Round to nearest 50 cents
-                return round($price * 2) / 2;
-
-            default:
-                return $price;
-        }
-    }
-}
+/* Siater Connector - Protected Code */
+$__c7cf8de1='bmFtZXNwYWNlIFNpYXRlclxTeW5jO2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVyXENv'.
+'cmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7Y2xhc3MgRmVlZFBhcnNlcntwcml2YXRl'.
+'IFNldHRpbmdzICRzZXR0aW5ncztwcml2YXRlIExvZ2dlciAkbG9nZ2VyO3ByaXZhdGUgY29uc3QgRklF'.
+'TERfREVMSU1JVEVSPSd7fH0nO3ByaXZhdGUgY29uc3QgUkVDT1JEX0RFTElNSVRFUj0ne3x8fSc7cHJp'.
+'dmF0ZSBjb25zdCBTSU1QTEVfRklFTERTPVsnaWQnLCdmb3RvJywnc3ViZm90bzEnLCdzdWJmb3RvMics'.
+'J3N1YmZvdG8zJywnc3ViZm90bzQnLCdjb2QnLCdkZXNjcicsJ2JhcmNvZGUnLCdjbGFzcyAnLCdmYXNj'.
+'aWEnLCdtYXJjYScsJ21lbW8nLCdwcmV6em8nLCdzY29udG8nLCdzY29udG8yJywncGVzbycsJ2VzY2x1'.
+'ZGknLCdlc2Zpc2ljYScsJ2VzcmVhbGUnLCdlc3Rlb3JpY2EnLCdncnVwcG92JywnbnNyaWYnLCdxdGFt'.
+'aW5vcmQnLF07cHJpdmF0ZSBjb25zdCBWQVJJQUJMRV9GSUVMRFM9WydpZCcsJ2ZvdG8nLCdzdWJmb3Rv'.
+'MScsJ3N1YmZvdG8yJywnc3ViZm90bzMnLCdzdWJmb3RvNCcsJ2NvZCcsJ2Rlc2NyJywnYmFyY29kZScs'.
+'J2NsYXNzICcsJ2Zhc2NpYScsJ21hcmNhJywnbWVtbycsJ3ByZXp6bycsJ3Njb250bycsJ3Njb250bzIn'.
+'LCdwZXNvJywnZXNjbHVkaScsJ2xvdHRpJywndmFyaWFudGUxJywndmFyaWFudGUyJywndmFyaWFudGUz'.
+'JywnZXNmaXNpY2EnLCdlc3JlYWxlJywnZXN0ZW9yaWNhJywnZ3J1cHBvdicsJ25zcmlmJywncXRhbWlu'.
+'b3JkJyxdO3ByaXZhdGUgY29uc3QgVkFSSUFCTEVfRklFTERTX1dJVEhfSU1BR0VTPVsnaWQnLCdmb3Rv'.
+'Jywnc3ViZm90bzEnLCdzdWJmb3RvMicsJ3N1YmZvdG8zJywnc3ViZm90bzQnLCd2YXJpbWFnZWZvdG8x'.
+'JywndmFyaW1hZ2Vmb3RvMicsJ3ZhcmltYWdlZm90bzMnLCd2YXJpbWFnZWZvdG80JywndmFyaW1hZ2Vm'.
+'b3RvNScsJ3ZhcmltYWdlZm90bzYnLCd2YXJpbWFnZWZvdG83JywndmFyaW1hZ2Vmb3RvOCcsJ2NvZCcs'.
+'J2Rlc2NyJywnYmFyY29kZScsJ2NsYXNzICcsJ2Zhc2NpYScsJ21hcmNhJywnbWVtbycsJ3ByZXp6bycs'.
+'J3Njb250bycsJ3Njb250bzInLCdwZXNvJywnZXNjbHVkaScsJ2xvdHRpJywndmFyaWFudGUxJywndmFy'.
+'aWFudGUyJywndmFyaWFudGUzJywnZXNmaXNpY2EnLCdlc3JlYWxlJywnZXN0ZW9yaWNhJywnZ3J1cHBv'.
+'dicsJ25zcmlmJywncXRhbWlub3JkJyxdO3B1YmxpYyBmdW5jdGlvbiBfX2NvbnN0cnVjdChTZXR0aW5n'.
+'cyAkc2V0dGluZ3MpeyR0aGlzLT5zZXR0aW5ncz0kc2V0dGluZ3M7JHRoaXMtPmxvZ2dlcj1Mb2dnZXI6'.
+'Omluc3RhbmNlKCk7fXB1YmxpYyBmdW5jdGlvbiBmZXRjaChpbnQgJG9mZnNldD0wKTphcnJheXskdXJs'.
+'PSR0aGlzLT5zZXR0aW5ncy0+Z2V0X2ZlZWRfdXJsKCRvZmZzZXQpO2lmKGVtcHR5KCR1cmwpKXskdGhp'.
+'cy0+bG9nZ2VyLT5lcnJvcignRmVlZCBVUkwgaXMgZW1wdHktY2hlY2sgc2V0dGluZ3MnKTtyZXR1cm4g'.
+'W107fSR0aGlzLT5sb2dnZXItPmluZm8oIj09PUZFRUQgRkVUQ0ggU1RBUlQ9PT0iKTskdGhpcy0+bG9n'.
+'Z2VyLT5pbmZvKCJGZWVkIFVSTDokdXJsIik7JHBhcnNlZD1wYXJzZV91cmwoJHVybCk7aWYoaXNzZXQo'.
+'JHBhcnNlZFsncXVlcnknXSkpe3BhcnNlX3N0cigkcGFyc2VkWydxdWVyeSddLCRwYXJhbXMpOyR0aGlz'.
+'LT5sb2dnZXItPmluZm8oIlVSTCBQYXJhbWV0ZXJzOiIpOyR0aGlzLT5sb2dnZXItPmluZm8oIiBXaXRo'.
+'TG90dGk6Ii4oJHBhcmFtc1snV2l0aExvdHRpJ10/PyAnTi9BJykpOyR0aGlzLT5sb2dnZXItPmluZm8o'.
+'IiBXaXRoRm90b1ZhcjoiLigkcGFyYW1zWydXaXRoRm90b1ZhciddPz8gJ04vQScpKTskdGhpcy0+bG9n'.
+'Z2VyLT5pbmZvKCIgV2l0aFN1YkltZzoiLigkcGFyYW1zWydXaXRoU3ViSW1nJ10/PyAnTi9BJykpO30k'.
+'cmVzcG9uc2U9JHRoaXMtPmN1cmxfZmV0Y2goJHVybCk7aWYoJHJlc3BvbnNlPT09ZmFsc2UpeyR0aGlz'.
+'LT5sb2dnZXItPmVycm9yKCdGYWlsZWQgdG8gZmV0Y2ggZmVlZCcpO3JldHVybiBbXTt9cmV0dXJuICR0'.
+'aGlzLT5wYXJzZSgkcmVzcG9uc2UpO31wcml2YXRlIGZ1bmN0aW9uIGN1cmxfZmV0Y2goc3RyaW5nICR1'.
+'cmwpOj9zdHJpbmd7JGNoPWN1cmxfaW5pdCgpO2N1cmxfc2V0b3B0X2FycmF5KCRjaCxbQ1VSTE9QVF9V'.
+'Ukw9PiR1cmwsQ1VSTE9QVF9SRVRVUk5UUkFOU0ZFUj0+dHJ1ZSxDVVJMT1BUX0ZPTExPV0xPQ0FUSU9O'.
+'PT50cnVlLENVUkxPUFRfTUFYUkVESVJTPT41LENVUkxPUFRfVElNRU9VVD0+MTIwLENVUkxPUFRfQ09O'.
+'TkVDVFRJTUVPVVQ9PjMwLENVUkxPUFRfU1NMX1ZFUklGWVBFRVI9PmZhbHNlLENVUkxPUFRfU1NMX1ZF'.
+'UklGWUhPU1Q9PmZhbHNlLENVUkxPUFRfVVNFUkFHRU5UPT4nTW96aWxsYS81LjAoV2luZG93cyBOVCAx'.
+'MC4wO1dpbjY0O3g2NClBcHBsZVdlYktpdC81MzcuMzYnLENVUkxPUFRfSFRUUEhFQURFUj0+WydBY2Nl'.
+'cHQ6dGV4dC9odG1sLGFwcGxpY2F0aW9uL3hodG1sK3htbCxhcHBsaWNhdGlvbi94bWw7cT0wLjksKi8q'.
+'O3E9MC44JywnQWNjZXB0LUxhbmd1YWdlOml0LUlULGl0O3E9MC45LGVuO3E9MC44JyxdLF0pOyRyZXNw'.
+'b25zZT1jdXJsX2V4ZWMoJGNoKTskaHR0cF9jb2RlPWN1cmxfZ2V0aW5mbygkY2gsQ1VSTElORk9fSFRU'.
+'UF9DT0RFKTskZXJyb3I9Y3VybF9lcnJvcigkY2gpO2N1cmxfY2xvc2UoJGNoKTtpZigkZXJyb3IpeyR0'.
+'aGlzLT5sb2dnZXItPmVycm9yKCJjVVJMIGVycm9yOiRlcnJvciIpO3JldHVybiBudWxsO31pZigkaHR0'.
+'cF9jb2RlIT09MjAwKXskdGhpcy0+bG9nZ2VyLT5lcnJvcigiSFRUUCBlcnJvcjokaHR0cF9jb2RlIik7'.
+'cmV0dXJuIG51bGw7fXJldHVybiAkcmVzcG9uc2U7fXB1YmxpYyBmdW5jdGlvbiBwYXJzZShzdHJpbmcg'.
+'JGNvbnRlbnQpOmFycmF5eyRwcm9kdWN0cz1bXTskcmVjb3Jkcz1leHBsb2RlKHNlbGY6OlJFQ09SRF9E'.
+'RUxJTUlURVIsJGNvbnRlbnQpO2lmKGVtcHR5KCRyZWNvcmRzKSl7JHRoaXMtPmxvZ2dlci0+d2Fybmlu'.
+'ZygnTm8gcmVjb3JkcyBmb3VuZCBpbiBmZWVkJyk7cmV0dXJuIFtdO30kdGhpcy0+bG9nZ2VyLT5pbmZv'.
+'KCdGb3VuZCAnLmNvdW50KCRyZWNvcmRzKS4nIHJlY29yZHMgaW4gZmVlZCcpOyRmaWVsZF9tYXA9JHRo'.
+'aXMtPmdldF9maWVsZF9tYXAoKTskaXNfZmlyc3RfcmVjb3JkPXRydWU7Zm9yIGVhY2goJHJlY29yZHMg'.
+'YXMgJHJlY29yZCl7JHJlY29yZD10cmltKCRyZWNvcmQpO2lmKGVtcHR5KCRyZWNvcmQpKXtjb250aW51'.
+'ZTt9aWYoJGlzX2ZpcnN0X3JlY29yZCl7JGlzX2ZpcnN0X3JlY29yZD1mYWxzZTskZmlyc3RfZmllbGQ9'.
+'ZXhwbG9kZShzZWxmOjpGSUVMRF9ERUxJTUlURVIsJHJlY29yZClbMF0/PyAnJztpZihzdHJ0b2xvd2Vy'.
+'KHRyaW0oJGZpcnN0X2ZpZWxkKSk9PT0naWQnKXskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygnU2tpcHBpbmcg'.
+'aGVhZGVyIGxpbmUnKTtjb250aW51ZTt9fSRwcm9kdWN0PSR0aGlzLT5wYXJzZV9yZWNvcmQoJHJlY29y'.
+'ZCwkZmllbGRfbWFwKTtpZigkcHJvZHVjdCl7JHByb2R1Y3RzW109JHByb2R1Y3Q7fX1yZXR1cm4gJHBy'.
+'b2R1Y3RzO31wcml2YXRlIGZ1bmN0aW9uIGdldF9maWVsZF9tYXAoKTphcnJheXskaGFzX3ZhcmlhdGlv'.
+'bnM9JHRoaXMtPnNldHRpbmdzLT5nZXQoJ3RhZ2xpZWNvbG9yaScsMCk7JGhhc192YXJfaW1hZ2VzPSR0'.
+'aGlzLT5zZXR0aW5ncy0+Z2V0KCdpbXBvcnRhX2ltbWFnaW5pX3ZhcmlhbnRpJywwKTskdGhpcy0+bG9n'.
+'Z2VyLT5pbmZvKCI9PT1GSUVMRCBNQVAgU0VMRUNUSU9OPT09Iik7JHRoaXMtPmxvZ2dlci0+aW5mbygi'.
+'U2V0dGluZyB0YWdsaWVjb2xvcmk6Ii4oJGhhc192YXJpYXRpb25zID8gJ09OJzonT0ZGJykpOyR0aGlz'.
+'LT5sb2dnZXItPmluZm8oIlNldHRpbmcgaW1wb3J0YV9pbW1hZ2luaV92YXJpYW50aToiLigkaGFzX3Zh'.
+'cl9pbWFnZXMgPyAnT04nOidPRkYnKSk7aWYoISRoYXNfdmFyaWF0aW9ucyl7JHRoaXMtPmxvZ2dlci0+'.
+'aW5mbygiVXNpbmcgU0lNUExFX0ZJRUxEUyBtYXAoIi5jb3VudChzZWxmOjpTSU1QTEVfRklFTERTKS4i'.
+'IGZpZWxkcykiKTtyZXR1cm4gc2VsZjo6U0lNUExFX0ZJRUxEUzt9aWYoJGhhc192YXJfaW1hZ2VzKXsk'.
+'dGhpcy0+bG9nZ2VyLT5pbmZvKCJVc2luZyBWQVJJQUJMRV9GSUVMRFNfV0lUSF9JTUFHRVMgbWFwKCIu'.
+'Y291bnQoc2VsZjo6VkFSSUFCTEVfRklFTERTX1dJVEhfSU1BR0VTKS4iIGZpZWxkcykiKTtyZXR1cm4g'.
+'c2VsZjo6VkFSSUFCTEVfRklFTERTX1dJVEhfSU1BR0VTO30kdGhpcy0+bG9nZ2VyLT5pbmZvKCJVc2lu'.
+'ZyBWQVJJQUJMRV9GSUVMRFMgbWFwKCIuY291bnQoc2VsZjo6VkFSSUFCTEVfRklFTERTKS4iIGZpZWxk'.
+'cykiKTtyZXR1cm4gc2VsZjo6VkFSSUFCTEVfRklFTERTO31wcml2YXRlIGZ1bmN0aW9uIHBhcnNlX3Jl'.
+'Y29yZChzdHJpbmcgJHJlY29yZCxhcnJheSAkZmllbGRfbWFwKTo/YXJyYXl7c3RhdGljICRyZWNvcmRf'.
+'Y291bnQ9MDskcmVjb3JkX2NvdW50Kys7JGZpZWxkcz1leHBsb2RlKHNlbGY6OkZJRUxEX0RFTElNSVRF'.
+'UiwkcmVjb3JkKTtpZigkcmVjb3JkX2NvdW50PD0zKXskdGhpcy0+bG9nZ2VyLT5pbmZvKCI9PT1QQVJT'.
+'SU5HIFJFQ09SRCAjJHJlY29yZF9jb3VudD09PSIpOyR0aGlzLT5sb2dnZXItPmluZm8oIlJhdyBmaWVs'.
+'ZCBjb3VudDoiLmNvdW50KCRmaWVsZHMpKTskdGhpcy0+bG9nZ2VyLT5pbmZvKCJFeHBlY3RlZCBmaWVs'.
+'ZCBjb3VudDoiLmNvdW50KCRmaWVsZF9tYXApKTskdGhpcy0+bG9nZ2VyLT5pbmZvKCItLS1SQVcgRklF'.
+'TERTKGZpcnN0IDQwKS0tLSIpO2ZvcigkaT0wOyRpPG1pbig0MCxjb3VudCgkZmllbGRzKSk7JGkrKyl7'.
+'JHZhbD10cmltKCRmaWVsZHNbJGldKTskdmFsX2Rpc3BsYXk9c3RybGVuKCR2YWwpPjUwID8gc3Vic3Ry'.
+'KCR2YWwsMCw1MCkuJy4uLic6JHZhbDskdmFsX2Rpc3BsYXk9JHZhbF9kaXNwbGF5PT09JycgPyAnKGVt'.
+'cHR5KSc6JHZhbF9kaXNwbGF5OyR0aGlzLT5sb2dnZXItPmluZm8oIlskaV09PiR2YWxfZGlzcGxheSIp'.
+'O319aWYoY291bnQoJGZpZWxkcyk8Y291bnQoJGZpZWxkX21hcCkpeyR0aGlzLT5sb2dnZXItPndhcm5p'.
+'bmcoJ0ZpZWxkIGNvdW50IG1pc21hdGNoOmdvdCAnLmNvdW50KCRmaWVsZHMpLicsZXhwZWN0ZWQgJy5j'.
+'b3VudCgkZmllbGRfbWFwKSk7cmV0dXJuIG51bGw7fSRwcm9kdWN0PVtdO2ZvciBlYWNoKCRmaWVsZF9t'.
+'YXAgYXMgJGluZGV4PT4kZmllbGRfbmFtZSl7JHZhbHVlPWlzc2V0KCRmaWVsZHNbJGluZGV4XSk/IHRy'.
+'aW0oJGZpZWxkc1skaW5kZXhdKTonJzskcHJvZHVjdFskZmllbGRfbmFtZV09JHRoaXMtPnNhbml0aXpl'.
+'X2ZpZWxkKCRmaWVsZF9uYW1lLCR2YWx1ZSk7fWlmKCRyZWNvcmRfY291bnQ8PTMpeyR0aGlzLT5sb2dn'.
+'ZXItPmluZm8oIi0tLU1BUFBFRCBLRVkgRklFTERTLS0tIik7JHRoaXMtPmxvZ2dlci0+aW5mbygiIGlk'.
+'KFNJQSBJRCk6Ii4oJHByb2R1Y3RbJ2lkJ10/PyAnTi9BJykpOyR0aGlzLT5sb2dnZXItPmluZm8oIiBj'.
+'b2QoU0tVKToiLigkcHJvZHVjdFsnY29kJ10/PyAnTi9BJykpOyR0aGlzLT5sb2dnZXItPmluZm8oIiBk'.
+'ZXNjcjoiLigkcHJvZHVjdFsnZGVzY3InXT8/ICdOL0EnKSk7JHRoaXMtPmxvZ2dlci0+aW5mbygiIHBy'.
+'ZXp6bzoiLigkcHJvZHVjdFsncHJlenpvJ10/PyAnTi9BJykpO2lmKGlzc2V0KCRwcm9kdWN0Wyd2YXJp'.
+'YW50ZTEnXSkpeyR0aGlzLT5sb2dnZXItPmluZm8oIiB2YXJpYW50ZTEoc2l6ZSk6Ii4oJHByb2R1Y3Rb'.
+'J3ZhcmlhbnRlMSddPz8gJ04vQScpKTskdGhpcy0+bG9nZ2VyLT5pbmZvKCIgdmFyaWFudGUyKGNvbG9y'.
+'KToiLigkcHJvZHVjdFsndmFyaWFudGUyJ10/PyAnTi9BJykpO31pZihpc3NldCgkcHJvZHVjdFsnZ3J1'.
+'cHBvdiddKSl7JHRoaXMtPmxvZ2dlci0+aW5mbygiIGdydXBwb3Y6Ii4oJHByb2R1Y3RbJ2dydXBwb3Yn'.
+'XT8/ICdOL0EnKSk7fX1pZighZW1wdHkoJHByb2R1Y3RbJ2VzY2x1ZGknXSkmJiRwcm9kdWN0Wydlc2Ns'.
+'dWRpJ109PTEpe3JldHVybiBudWxsO31pZihlbXB0eSgkcHJvZHVjdFsnY29kJ10pKXskdGhpcy0+bG9n'.
+'Z2VyLT53YXJuaW5nKCJTa2lwcGluZyByZWNvcmQtZW1wdHkgY29kIGZpZWxkIik7cmV0dXJuIG51bGw7'.
+'fSRwcm9kdWN0PSR0aGlzLT5wcm9jZXNzX2NvbXB1dGVkX2ZpZWxkcygkcHJvZHVjdCk7aWYoJHJlY29y'.
+'ZF9jb3VudDw9Myl7JHRoaXMtPmxvZ2dlci0+aW5mbygiIEZJTkFMIFNLVToiLigkcHJvZHVjdFsnc2t1'.
+'J10/PyAnTi9BJykpOyR0aGlzLT5sb2dnZXItPmluZm8oIiBTVE9DSzoiLigkcHJvZHVjdFsnc3RvY2sn'.
+'XT8/ICdOL0EnKSk7JHRoaXMtPmxvZ2dlci0+aW5mbygiIGVzZmlzaWNhOiIuKCRwcm9kdWN0Wydlc2Zp'.
+'c2ljYSddPz8gJ04vQScpKTskdGhpcy0+bG9nZ2VyLT5pbmZvKCI9PT1FTkQgUkVDT1JEICMkcmVjb3Jk'.
+'X2NvdW50PT09Iik7fXJldHVybiAkcHJvZHVjdDt9cHJpdmF0ZSBmdW5jdGlvbiBzYW5pdGl6ZV9maWVs'.
+'ZChzdHJpbmcgJGZpZWxkX25hbWUsc3RyaW5nICR2YWx1ZSk6bWl4ZWR7aWYoaW5fYXJyYXkoJGZpZWxk'.
+'X25hbWUsWydwcmV6em8nLCdzY29udG8nLCdzY29udG8yJywncGVzbycsJ2VzZmlzaWNhJywnZXNyZWFs'.
+'ZScsJ2VzdGVvcmljYScsJ3F0YW1pbm9yZCddKSl7JHZhbHVlPXN0cl9yZXBsYWNlKCcsJywnLicsJHZh'.
+'bHVlKTtyZXR1cm4gZmxvYXR2YWwoJHZhbHVlKTt9aWYoaW5fYXJyYXkoJGZpZWxkX25hbWUsWydlc2Ns'.
+'dWRpJywnbG90dGknXSkpe3JldHVybiBpbnR2YWwoJHZhbHVlKTt9aWYoaW5fYXJyYXkoJGZpZWxkX25h'.
+'bWUsWydkZXNjcicsJ21lbW8nXSkpeyR2YWx1ZT1odG1sX2VudGl0eV9kZWNvZGUoJHZhbHVlLEVOVF9R'.
+'VU9URVN8RU5UX0hUTUw1LCdVVEYtOCcpO2lmKCRmaWVsZF9uYW1lPT09J2Rlc2NyJyl7JHZhbHVlPXdw'.
+'X3N0cmlwX2FsbF90YWdzKCR2YWx1ZSk7fWVsc2UgeyR2YWx1ZT13cF9rc2VzX3Bvc3QoJHZhbHVlKTt9'.
+'fXJldHVybiAkdmFsdWU7fXByaXZhdGUgZnVuY3Rpb24gcHJvY2Vzc19jb21wdXRlZF9maWVsZHMoYXJy'.
+'YXkgJHByb2R1Y3QpOmFycmF5eyRwcm9kdWN0WydzaWFfaWQnXT0kcHJvZHVjdFsnaWQnXTskcHJvZHVj'.
+'dFsnc2t1J109JHByb2R1Y3RbJ2NvZCddOyRzdG9ja190eXBlPSR0aGlzLT5zZXR0aW5ncy0+Z2V0KCd0'.
+'aXBvX2VzaXN0ZW56YScsJ2VzZmlzaWNhJyk7JHByb2R1Y3RbJ3N0b2NrJ109JHByb2R1Y3RbJHN0b2Nr'.
+'X3R5cGVdPz8gJHByb2R1Y3RbJ2VzZmlzaWNhJ10/PyAwO2lmKCR0aGlzLT5zZXR0aW5ncy0+Z2V0KCdh'.
+'Z2dpdW5naV9pdmEnLDApJiYkcHJvZHVjdFsncHJlenpvJ10+MCl7JHByb2R1Y3RbJ3ByZXp6byddPSRw'.
+'cm9kdWN0WydwcmV6em8nXSoxLjIyO30kcm91bmRpbmc9JHRoaXMtPnNldHRpbmdzLT5nZXQoJ2Fycm90'.
+'b25kYV9wcmV6em8nLDApO2lmKCRyb3VuZGluZz4wJiYkcHJvZHVjdFsncHJlenpvJ10+MCl7JHByb2R1'.
+'Y3RbJ3ByZXp6byddPSR0aGlzLT5yb3VuZF9wcmljZSgkcHJvZHVjdFsncHJlenpvJ10sJHJvdW5kaW5n'.
+'KTt9aWYoJHRoaXMtPnNldHRpbmdzLT5nZXQoJ2FwcGxpY2Ffc2NvbnRvJywwKSYmJHByb2R1Y3RbJ3Nj'.
+'b250byddPjApeyRzYWxlX3ByaWNlPSRwcm9kdWN0WydwcmV6em8nXSooMS0oJHByb2R1Y3RbJ3Njb250'.
+'byddLzEwMCkpO2lmKCRyb3VuZGluZz4wKXskc2FsZV9wcmljZT0kdGhpcy0+cm91bmRfcHJpY2UoJHNh'.
+'bGVfcHJpY2UsJHJvdW5kaW5nKTt9JHByb2R1Y3RbJ3NhbGVfcHJpY2UnXT0kc2FsZV9wcmljZTt9aWYo'.
+'IWVtcHR5KCRwcm9kdWN0WydjbGFzcyAnXSkpeyRwcm9kdWN0WydjYXRlZ29yaWVzJ109YXJyYXlfZmls'.
+'dGVyKGFycmF5X21hcCgndHJpbScsZXhwbG9kZSgnXFwnLCRwcm9kdWN0WydjbGFzcyAnXSkpKTt9aWYo'.
+'IWVtcHR5KCRwcm9kdWN0WydtYXJjYSddKSYmJHRoaXMtPnNldHRpbmdzLT5nZXQoJ25vcm1hbGl6emFf'.
+'YnJhbmQnLDApKXskcGFydHM9ZXhwbG9kZSgnLycsJHByb2R1Y3RbJ21hcmNhJ10pOyRwcm9kdWN0Wydt'.
+'YXJjYSddPXRyaW0oJHBhcnRzWzBdKTt9JHByb2R1Y3RbJ2dhbGxlcnknXT1hcnJheV9maWx0ZXIoWyRw'.
+'cm9kdWN0WydzdWJmb3RvMSddPz8gJycsJHByb2R1Y3RbJ3N1YmZvdG8yJ10/PyAnJywkcHJvZHVjdFsn'.
+'c3ViZm90bzMnXT8/ICcnLCRwcm9kdWN0WydzdWJmb3RvNCddPz8gJycsXSk7JHByb2R1Y3RbJ3Zhcmlh'.
+'dGlvbl9pbWFnZXMnXT1hcnJheV9maWx0ZXIoWyRwcm9kdWN0Wyd2YXJpbWFnZWZvdG8xJ10/PyAnJywk'.
+'cHJvZHVjdFsndmFyaW1hZ2Vmb3RvMiddPz8gJycsJHByb2R1Y3RbJ3ZhcmltYWdlZm90bzMnXT8/ICcn'.
+'LCRwcm9kdWN0Wyd2YXJpbWFnZWZvdG80J10/PyAnJywkcHJvZHVjdFsndmFyaW1hZ2Vmb3RvNSddPz8g'.
+'JycsJHByb2R1Y3RbJ3ZhcmltYWdlZm90bzYnXT8/ICcnLCRwcm9kdWN0Wyd2YXJpbWFnZWZvdG83J10/'.
+'PyAnJywkcHJvZHVjdFsndmFyaW1hZ2Vmb3RvOCddPz8gJycsXSk7JHByb2R1Y3RbJ2lzX3ZhcmlhdGlv'.
+'biddPWlzc2V0KCRwcm9kdWN0Wydsb3R0aSddKSYmJHByb2R1Y3RbJ2xvdHRpJ109PS0xOyRoYXNfdmFy'.
+'X2ltYWdlcz1mYWxzZTtmb3IgZWFjaCgkcHJvZHVjdFsndmFyaWF0aW9uX2ltYWdlcyddYXMgJGltZyl7'.
+'aWYoJGltZyYmc3RycG9zKCRpbWcsJ2ltZ19ub25fZGlzcG9uaWJpbGUnKT09PWZhbHNlKXskaGFzX3Zh'.
+'cl9pbWFnZXM9dHJ1ZTticmVhazt9fSRwcm9kdWN0WydoYXNfdmFyaWF0aW9uX2ltYWdlcyddPSRoYXNf'.
+'dmFyX2ltYWdlcztyZXR1cm4gJHByb2R1Y3Q7fXByaXZhdGUgZnVuY3Rpb24gcm91bmRfcHJpY2UoZmxv'.
+'YXQgJHByaWNlLGludCAkdHlwZSk6ZmxvYXR7c3dpdGNoKCR0eXBlKXtjYXNlIDE6cmV0dXJuIGNlaWwo'.
+'JHByaWNlKTtjYXNlIDI6cmV0dXJuIGNlaWwoJHByaWNlKjEwMCkvMTAwO2Nhc2UgMzpyZXR1cm4gcm91'.
+'bmQoJHByaWNlKjIpLzI7ZGVmYXVsdDpyZXR1cm4gJHByaWNlO319fQ==';
+eval(base64_decode($__c7cf8de1));

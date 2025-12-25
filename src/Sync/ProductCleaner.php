@@ -1,387 +1,125 @@
 <?php
-/**
- * Product Cleaner
- *
- * Removes products that are no longer in the SIA feed
- * Uses a 3-phase approach:
- * 1) Fetch & cache all SKUs from SIA (in batches)
- * 2) Compare with WooCommerce products
- * 3) Trash products not found in SIA
- */
-
-namespace Siater\Sync;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-
-class ProductCleaner {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Configuration
-     */
-    private int $hours_between_cycles = 6;
-    private int $delete_batch_size = 50;
-    private int $fetch_batch_size = 500;
-
-    /**
-     * Option keys for state tracking
-     */
-    private const OPTION_PHASE = 'siater_cleaner_phase';
-    private const OPTION_FETCH_OFFSET = 'siater_cleaner_fetch_offset';
-    private const OPTION_SUPPLIER_SKUS = 'siater_cleaner_supplier_skus';
-    private const OPTION_SKUS_TO_DELETE = 'siater_cleaner_skus_to_delete';
-    private const OPTION_LAST_COMPLETE = 'siater_cleaner_last_complete';
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-    }
-
-    /**
-     * Run the cleaner (call this from cron)
-     */
-    public function run(): void {
-        if ($this->settings->get('debug_enabled', 0)) {
-            $this->logger->enable();
-        }
-
-        $current_phase = get_option(self::OPTION_PHASE, '');
-
-        // No active phase - check if we should start
-        if (empty($current_phase)) {
-            if (!$this->should_start_new_cycle()) {
-                return;
-            }
-            $current_phase = 'fetch';
-            update_option(self::OPTION_PHASE, 'fetch');
-            update_option(self::OPTION_FETCH_OFFSET, 0);
-            delete_option(self::OPTION_SUPPLIER_SKUS);
-            $this->logger->info('Product Cleaner: Starting new cycle');
-        }
-
-        // Execute current phase
-        switch ($current_phase) {
-            case 'fetch':
-                $this->phase_fetch();
-                break;
-            case 'compare':
-                $this->phase_compare();
-                break;
-            case 'delete':
-                $this->phase_delete();
-                break;
-        }
-    }
-
-    /**
-     * Check if we should start a new cleaning cycle
-     */
-    private function should_start_new_cycle(): bool {
-        $last_complete = get_option(self::OPTION_LAST_COMPLETE, 0);
-
-        if ($last_complete > 0) {
-            $hours_passed = (time() - $last_complete) / 3600;
-            if ($hours_passed < $this->hours_between_cycles) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * Phase 1: Fetch SKUs from SIA feed
-     */
-    private function phase_fetch(): void {
-        $fetch_offset = (int) get_option(self::OPTION_FETCH_OFFSET, 0);
-        $supplier_skus = get_option(self::OPTION_SUPPLIER_SKUS, []);
-
-        $this->logger->info("Cleaner Phase 1: Fetching SKUs (offset: $fetch_offset)");
-
-        // Build URL
-        $url = $this->settings->get_sku_feed_url($fetch_offset, $this->fetch_batch_size);
-
-        if (empty($url)) {
-            $this->logger->error('Cleaner: No feed URL configured');
-            $this->abort_cycle();
-            return;
-        }
-
-        // Fetch feed
-        $body = $this->fetch_url($url);
-
-        if ($body === false) {
-            $this->logger->error('Cleaner: Failed to fetch feed');
-            return; // Will retry on next run
-        }
-
-        // Parse feed
-        $lines = array_filter(explode('{||}', $body));
-
-        // Check if we have data
-        if (count($lines) < 2) {
-            if (empty($supplier_skus)) {
-                $this->logger->error('Cleaner: No SKUs found in feed');
-                $this->abort_cycle();
-                return;
-            }
-
-            // Done fetching, move to compare
-            delete_option(self::OPTION_FETCH_OFFSET);
-            update_option(self::OPTION_PHASE, 'compare');
-            $this->logger->info('Cleaner: Fetch complete. Total SKUs: ' . count($supplier_skus));
-            return;
-        }
-
-        // Parse header to find Codice column
-        $header = explode('{|}', $lines[0]);
-        $codice_index = array_search('Codice', $header);
-
-        // If not found, try first column (cod)
-        if ($codice_index === false) {
-            $codice_index = 0;
-        }
-
-        // Extract SKUs from this batch
-        $batch_count = 0;
-        for ($i = 1; $i < count($lines); $i++) {
-            $fields = explode('{|}', $lines[$i]);
-            if (isset($fields[$codice_index]) && !empty(trim($fields[$codice_index]))) {
-                $supplier_skus[] = trim($fields[$codice_index]);
-                $batch_count++;
-            }
-        }
-
-        // Save updated SKUs list
-        update_option(self::OPTION_SUPPLIER_SKUS, $supplier_skus, false);
-
-        // Check if this was the last batch
-        if ($batch_count < $this->fetch_batch_size) {
-            delete_option(self::OPTION_FETCH_OFFSET);
-            update_option(self::OPTION_PHASE, 'compare');
-            $this->logger->info("Cleaner: Fetched $batch_count SKUs (last batch). Total: " . count($supplier_skus));
-        } else {
-            $next_offset = $fetch_offset + $this->fetch_batch_size;
-            update_option(self::OPTION_FETCH_OFFSET, $next_offset);
-            $this->logger->info("Cleaner: Fetched $batch_count SKUs. Total: " . count($supplier_skus) . ". Next offset: $next_offset");
-        }
-    }
-
-    /**
-     * Phase 2: Compare and find products to delete
-     */
-    private function phase_compare(): void {
-        global $wpdb;
-
-        $this->logger->info('Cleaner Phase 2: Comparing products');
-
-        $supplier_skus = get_option(self::OPTION_SUPPLIER_SKUS, []);
-
-        if (empty($supplier_skus)) {
-            $this->logger->error('Cleaner: No cached supplier SKUs');
-            $this->abort_cycle();
-            return;
-        }
-
-        // Get all WooCommerce product SKUs
-        $woo_products = $wpdb->get_results("
-            SELECT p.ID, pm.meta_value as sku
-            FROM {$wpdb->posts} p
-            JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_sku'
-            WHERE p.post_type = 'product'
-            AND p.post_status = 'publish'
-            AND pm.meta_value != ''
-        ");
-
-        $this->logger->info('Cleaner: Supplier: ' . count($supplier_skus) . ' SKUs | WooCommerce: ' . count($woo_products) . ' products');
-
-        // Create lookup for fast comparison
-        $supplier_skus_lookup = array_flip($supplier_skus);
-
-        // Find products NOT in supplier catalog
-        $skus_to_delete = [];
-        foreach ($woo_products as $product) {
-            if (!isset($supplier_skus_lookup[$product->sku])) {
-                $skus_to_delete[] = $product->sku;
-            }
-        }
-
-        // Clean up supplier SKUs cache
-        delete_option(self::OPTION_SUPPLIER_SKUS);
-
-        if (empty($skus_to_delete)) {
-            $this->complete_cycle();
-            $this->logger->success('Cleaner: All products are in sync');
-            return;
-        }
-
-        // Save SKUs to delete
-        update_option(self::OPTION_SKUS_TO_DELETE, $skus_to_delete, false);
-        update_option(self::OPTION_PHASE, 'delete');
-
-        $this->logger->info('Cleaner: Found ' . count($skus_to_delete) . ' products to trash');
-    }
-
-    /**
-     * Phase 3: Trash products in batches
-     */
-    private function phase_delete(): void {
-        global $wpdb;
-
-        $skus_to_delete = get_option(self::OPTION_SKUS_TO_DELETE, []);
-
-        if (empty($skus_to_delete)) {
-            $this->complete_cycle();
-            return;
-        }
-
-        $this->logger->info('Cleaner Phase 3: Trashing products (' . count($skus_to_delete) . ' remaining)');
-
-        // Get batch of SKUs to process
-        $batch = array_slice($skus_to_delete, 0, $this->delete_batch_size);
-
-        if (empty($batch)) {
-            $this->complete_cycle();
-            return;
-        }
-
-        // Escape SKUs for SQL IN clause
-        $escaped_skus = array_map(function($sku) use ($wpdb) {
-            return $wpdb->prepare('%s', $sku);
-        }, $batch);
-        $sku_list = implode(',', $escaped_skus);
-
-        // Get all product IDs for these SKUs
-        $product_ids = $wpdb->get_col("
-            SELECT post_id FROM {$wpdb->postmeta}
-            WHERE meta_key = '_sku' AND meta_value IN ({$sku_list})
-        ");
-
-        $trashed = 0;
-        if (!empty($product_ids)) {
-            $id_list = implode(',', array_map('intval', $product_ids));
-
-            // Trash products (direct SQL for performance)
-            $wpdb->query("
-                UPDATE {$wpdb->posts}
-                SET post_status = 'trash'
-                WHERE ID IN ({$id_list}) AND post_type = 'product'
-            ");
-
-            $trashed = count($product_ids);
-        }
-
-        // Remove processed SKUs from list
-        $skus_to_delete = array_slice($skus_to_delete, $this->delete_batch_size);
-
-        if (empty($skus_to_delete)) {
-            $this->complete_cycle();
-            $this->clear_wc_caches();
-            $this->logger->success("Cleaner: Trashed $trashed products. Cycle complete.");
-        } else {
-            update_option(self::OPTION_SKUS_TO_DELETE, $skus_to_delete, false);
-            $this->logger->info("Cleaner: Trashed $trashed. " . count($skus_to_delete) . " remaining.");
-        }
-    }
-
-    /**
-     * Complete the cleaning cycle
-     */
-    private function complete_cycle(): void {
-        delete_option(self::OPTION_PHASE);
-        delete_option(self::OPTION_SKUS_TO_DELETE);
-        delete_option(self::OPTION_SUPPLIER_SKUS);
-        delete_option(self::OPTION_FETCH_OFFSET);
-        update_option(self::OPTION_LAST_COMPLETE, time());
-    }
-
-    /**
-     * Abort cycle (on error)
-     */
-    private function abort_cycle(): void {
-        delete_option(self::OPTION_PHASE);
-        delete_option(self::OPTION_FETCH_OFFSET);
-        delete_option(self::OPTION_SUPPLIER_SKUS);
-    }
-
-    /**
-     * Clear WooCommerce caches
-     */
-    private function clear_wc_caches(): void {
-        if (function_exists('wc_delete_product_transients')) {
-            wc_delete_product_transients();
-        }
-        delete_transient('wc_term_counts');
-        wp_cache_flush();
-    }
-
-    /**
-     * Fetch URL content
-     */
-    private function fetch_url(string $url): string|false {
-        $context = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => [
-                    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                ],
-                'timeout' => 60,
-                'ignore_errors' => true,
-            ],
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-            ],
-        ]);
-
-        return @file_get_contents($url, false, $context);
-    }
-
-    /**
-     * Get cleaner status
-     */
-    public function get_status(): array {
-        $phase = get_option(self::OPTION_PHASE, '');
-        $last_complete = get_option(self::OPTION_LAST_COMPLETE, 0);
-        $skus_to_delete = get_option(self::OPTION_SKUS_TO_DELETE, []);
-
-        return [
-            'phase' => $phase ?: 'idle',
-            'last_complete' => $last_complete,
-            'last_complete_formatted' => $last_complete ? date('Y-m-d H:i:s', $last_complete) : 'Mai',
-            'pending_deletions' => count($skus_to_delete),
-            'next_run_hours' => $last_complete ? max(0, $this->hours_between_cycles - ((time() - $last_complete) / 3600)) : 0,
-        ];
-    }
-
-    /**
-     * Force start a new cycle
-     */
-    public function force_start(): void {
-        delete_option(self::OPTION_LAST_COMPLETE);
-        $this->abort_cycle();
-    }
-
-    /**
-     * Set hours between cycles
-     */
-    public function set_interval(int $hours): void {
-        $this->hours_between_cycles = max(1, $hours);
-    }
-}
+/* Siater Connector - Protected Code */
+$__ffe50b6f='bmFtZXNwYWNlIFNpYXRlclxTeW5jO2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVyXENv'.
+'cmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7Y2xhc3MgUHJvZHVjdENsZWFuZXJ7cHJp'.
+'dmF0ZSBTZXR0aW5ncyAkc2V0dGluZ3M7cHJpdmF0ZSBMb2dnZXIgJGxvZ2dlcjtwcml2YXRlIGludCAk'.
+'aG91cnNfYmV0d2Vlbl9jeWNsZXM9Njtwcml2YXRlIGludCAkZGVsZXRlX2JhdGNoX3NpemU9NTA7cHJp'.
+'dmF0ZSBpbnQgJGZldGNoX2JhdGNoX3NpemU9NTAwO3ByaXZhdGUgY29uc3QgT1BUSU9OX1BIQVNFPSdz'.
+'aWF0ZXJfY2xlYW5lcl9waGFzZSc7cHJpdmF0ZSBjb25zdCBPUFRJT05fRkVUQ0hfT0ZGU0VUPSdzaWF0'.
+'ZXJfY2xlYW5lcl9mZXRjaF9vZmZzZXQnO3ByaXZhdGUgY29uc3QgT1BUSU9OX1NVUFBMSUVSX1NLVVM9'.
+'J3NpYXRlcl9jbGVhbmVyX3N1cHBsaWVyX3NrdXMnO3ByaXZhdGUgY29uc3QgT1BUSU9OX1NLVVNfVE9f'.
+'REVMRVRFPSdzaWF0ZXJfY2xlYW5lcl9za3VzX3RvX2RlbGV0ZSc7cHJpdmF0ZSBjb25zdCBPUFRJT05f'.
+'TEFTVF9DT01QTEVURT0nc2lhdGVyX2NsZWFuZXJfbGFzdF9jb21wbGV0ZSc7cHVibGljIGZ1bmN0aW9u'.
+'IF9fY29uc3RydWN0KFNldHRpbmdzICRzZXR0aW5ncyl7JHRoaXMtPnNldHRpbmdzPSRzZXR0aW5nczsk'.
+'dGhpcy0+bG9nZ2VyPUxvZ2dlcjo6aW5zdGFuY2UoKTt9cHVibGljIGZ1bmN0aW9uIHJ1bigpOnZvaWR7'.
+'aWYoJHRoaXMtPnNldHRpbmdzLT5nZXQoJ2RlYnVnX2VuYWJsZWQnLDApKXskdGhpcy0+bG9nZ2VyLT5l'.
+'bmFibGUoKTt9JGN1cnJlbnRfcGhhc2U9Z2V0X29wdGlvbihzZWxmOjpPUFRJT05fUEhBU0UsJycpO2lm'.
+'KGVtcHR5KCRjdXJyZW50X3BoYXNlKSl7aWYoISR0aGlzLT5zaG91bGRfc3RhcnRfbmV3X2N5Y2xlKCkp'.
+'e3JldHVybiA7fSRjdXJyZW50X3BoYXNlPSdmZXRjaCc7dXBkYXRlX29wdGlvbihzZWxmOjpPUFRJT05f'.
+'UEhBU0UsJ2ZldGNoJyk7dXBkYXRlX29wdGlvbihzZWxmOjpPUFRJT05fRkVUQ0hfT0ZGU0VULDApO2Rl'.
+'bGV0ZV9vcHRpb24oc2VsZjo6T1BUSU9OX1NVUFBMSUVSX1NLVVMpOyR0aGlzLT5sb2dnZXItPmluZm8o'.
+'J1Byb2R1Y3QgQ2xlYW5lcjpTdGFydGluZyBuZXcgY3ljbGUnKTt9c3dpdGNoKCRjdXJyZW50X3BoYXNl'.
+'KXtjYXNlICdmZXRjaCc6JHRoaXMtPnBoYXNlX2ZldGNoKCk7YnJlYWs7Y2FzZSAnY29tcGFyZSc6JHRo'.
+'aXMtPnBoYXNlX2NvbXBhcmUoKTticmVhaztjYXNlICdkZWxldGUnOiR0aGlzLT5waGFzZV9kZWxldGUo'.
+'KTticmVhazt9fXByaXZhdGUgZnVuY3Rpb24gc2hvdWxkX3N0YXJ0X25ld19jeWNsZSgpOmJvb2x7JGxh'.
+'c3RfY29tcGxldGU9Z2V0X29wdGlvbihzZWxmOjpPUFRJT05fTEFTVF9DT01QTEVURSwwKTtpZigkbGFz'.
+'dF9jb21wbGV0ZT4wKXskaG91cnNfcGFzc2VkPSh0aW1lKCktJGxhc3RfY29tcGxldGUpLzM2MDA7aWYo'.
+'JGhvdXJzX3Bhc3NlZDwkdGhpcy0+aG91cnNfYmV0d2Vlbl9jeWNsZXMpe3JldHVybiBmYWxzZTt9fXJl'.
+'dHVybiB0cnVlO31wcml2YXRlIGZ1bmN0aW9uIHBoYXNlX2ZldGNoKCk6dm9pZHskZmV0Y2hfb2Zmc2V0'.
+'PShpbnQpZ2V0X29wdGlvbihzZWxmOjpPUFRJT05fRkVUQ0hfT0ZGU0VULDApOyRzdXBwbGllcl9za3Vz'.
+'PWdldF9vcHRpb24oc2VsZjo6T1BUSU9OX1NVUFBMSUVSX1NLVVMsW10pOyR0aGlzLT5sb2dnZXItPmlu'.
+'Zm8oIkNsZWFuZXIgUGhhc2UgMTpGZXRjaGluZyBTS1VzKG9mZnNldDokZmV0Y2hfb2Zmc2V0KSIpOyR1'.
+'cmw9JHRoaXMtPnNldHRpbmdzLT5nZXRfc2t1X2ZlZWRfdXJsKCRmZXRjaF9vZmZzZXQsJHRoaXMtPmZl'.
+'dGNoX2JhdGNoX3NpemUpO2lmKGVtcHR5KCR1cmwpKXskdGhpcy0+bG9nZ2VyLT5lcnJvcignQ2xlYW5l'.
+'cjpObyBmZWVkIFVSTCBjb25maWd1cmVkJyk7JHRoaXMtPmFib3J0X2N5Y2xlKCk7cmV0dXJuIDt9JGJv'.
+'ZHk9JHRoaXMtPmZldGNoX3VybCgkdXJsKTtpZigkYm9keT09PWZhbHNlKXskdGhpcy0+bG9nZ2VyLT5l'.
+'cnJvcignQ2xlYW5lcjpGYWlsZWQgdG8gZmV0Y2ggZmVlZCcpO3JldHVybiA7fSRsaW5lcz1hcnJheV9m'.
+'aWx0ZXIoZXhwbG9kZSgne3x8fScsJGJvZHkpKTtpZihjb3VudCgkbGluZXMpPDIpe2lmKGVtcHR5KCRz'.
+'dXBwbGllcl9za3VzKSl7JHRoaXMtPmxvZ2dlci0+ZXJyb3IoJ0NsZWFuZXI6Tm8gU0tVcyBmb3VuZCBp'.
+'biBmZWVkJyk7JHRoaXMtPmFib3J0X2N5Y2xlKCk7cmV0dXJuIDt9ZGVsZXRlX29wdGlvbihzZWxmOjpP'.
+'UFRJT05fRkVUQ0hfT0ZGU0VUKTt1cGRhdGVfb3B0aW9uKHNlbGY6Ok9QVElPTl9QSEFTRSwnY29tcGFy'.
+'ZScpOyR0aGlzLT5sb2dnZXItPmluZm8oJ0NsZWFuZXI6RmV0Y2ggY29tcGxldGUuVG90YWwgU0tVczon'.
+'LmNvdW50KCRzdXBwbGllcl9za3VzKSk7cmV0dXJuIDt9JGhlYWRlcj1leHBsb2RlKCd7fH0nLCRsaW5l'.
+'c1swXSk7JGNvZGljZV9pbmRleD1hcnJheV9zZWFyY2goJ0NvZGljZScsJGhlYWRlcik7aWYoJGNvZGlj'.
+'ZV9pbmRleD09PWZhbHNlKXskY29kaWNlX2luZGV4PTA7fSRiYXRjaF9jb3VudD0wO2ZvcigkaT0xOyRp'.
+'PGNvdW50KCRsaW5lcyk7JGkrKyl7JGZpZWxkcz1leHBsb2RlKCd7fH0nLCRsaW5lc1skaV0pO2lmKGlz'.
+'c2V0KCRmaWVsZHNbJGNvZGljZV9pbmRleF0pJiYhZW1wdHkodHJpbSgkZmllbGRzWyRjb2RpY2VfaW5k'.
+'ZXhdKSkpeyRzdXBwbGllcl9za3VzW109dHJpbSgkZmllbGRzWyRjb2RpY2VfaW5kZXhdKTskYmF0Y2hf'.
+'Y291bnQrKzt9fXVwZGF0ZV9vcHRpb24oc2VsZjo6T1BUSU9OX1NVUFBMSUVSX1NLVVMsJHN1cHBsaWVy'.
+'X3NrdXMsZmFsc2UpO2lmKCRiYXRjaF9jb3VudDwkdGhpcy0+ZmV0Y2hfYmF0Y2hfc2l6ZSl7ZGVsZXRl'.
+'X29wdGlvbihzZWxmOjpPUFRJT05fRkVUQ0hfT0ZGU0VUKTt1cGRhdGVfb3B0aW9uKHNlbGY6Ok9QVElP'.
+'Tl9QSEFTRSwnY29tcGFyZScpOyR0aGlzLT5sb2dnZXItPmluZm8oIkNsZWFuZXI6RmV0Y2hlZCAkYmF0'.
+'Y2hfY291bnQgU0tVcyhsYXN0IGJhdGNoKS5Ub3RhbDoiLmNvdW50KCRzdXBwbGllcl9za3VzKSk7fWVs'.
+'c2UgeyRuZXh0X29mZnNldD0kZmV0Y2hfb2Zmc2V0KyR0aGlzLT5mZXRjaF9iYXRjaF9zaXplO3VwZGF0'.
+'ZV9vcHRpb24oc2VsZjo6T1BUSU9OX0ZFVENIX09GRlNFVCwkbmV4dF9vZmZzZXQpOyR0aGlzLT5sb2dn'.
+'ZXItPmluZm8oIkNsZWFuZXI6RmV0Y2hlZCAkYmF0Y2hfY291bnQgU0tVcy5Ub3RhbDoiLmNvdW50KCRz'.
+'dXBwbGllcl9za3VzKS4iLk5leHQgb2Zmc2V0OiRuZXh0X29mZnNldCIpO319cHJpdmF0ZSBmdW5jdGlv'.
+'biBwaGFzZV9jb21wYXJlKCk6dm9pZHtnbG9iYWwgJHdwZGI7JHRoaXMtPmxvZ2dlci0+aW5mbygnQ2xl'.
+'YW5lciBQaGFzZSAyOkNvbXBhcmluZyBwcm9kdWN0cycpOyRzdXBwbGllcl9za3VzPWdldF9vcHRpb24o'.
+'c2VsZjo6T1BUSU9OX1NVUFBMSUVSX1NLVVMsW10pO2lmKGVtcHR5KCRzdXBwbGllcl9za3VzKSl7JHRo'.
+'aXMtPmxvZ2dlci0+ZXJyb3IoJ0NsZWFuZXI6Tm8gY2FjaGVkIHN1cHBsaWVyIFNLVXMnKTskdGhpcy0+'.
+'YWJvcnRfY3ljbGUoKTtyZXR1cm4gO30kd29vX3Byb2R1Y3RzPSR3cGRiLT5nZXRfcmVzdWx0cygiCiBT'.
+'RUxFQ1QgcC5JRCxwbS5tZXRhX3ZhbHVlIGFzIHNrdQogRlJPTXskd3BkYi0+cG9zdHN9cAogSk9JTnsk'.
+'d3BkYi0+cG9zdG1ldGF9cG0gT04gcC5JRD1wbS5wb3N0X2lkIEFORCBwbS5tZXRhX2tleT0nX3NrdScK'.
+'IFdIRVJFIHAucG9zdF90eXBlPSdwcm9kdWN0JwogQU5EIHAucG9zdF9zdGF0dXM9J3B1Ymxpc2gnCiBB'.
+'TkQgcG0ubWV0YV92YWx1ZSE9JycKICIpOyR0aGlzLT5sb2dnZXItPmluZm8oJ0NsZWFuZXI6U3VwcGxp'.
+'ZXI6Jy5jb3VudCgkc3VwcGxpZXJfc2t1cykuJyBTS1VzfFdvb0NvbW1lcmNlOicuY291bnQoJHdvb19w'.
+'cm9kdWN0cykuJyBwcm9kdWN0cycpOyRzdXBwbGllcl9za3VzX2xvb2t1cD1hcnJheV9mbGlwKCRzdXBw'.
+'bGllcl9za3VzKTskc2t1c190b19kZWxldGU9W107Zm9yIGVhY2goJHdvb19wcm9kdWN0cyBhcyAkcHJv'.
+'ZHVjdCl7aWYoIWlzc2V0KCRzdXBwbGllcl9za3VzX2xvb2t1cFskcHJvZHVjdC0+c2t1XSkpeyRza3Vz'.
+'X3RvX2RlbGV0ZVtdPSRwcm9kdWN0LT5za3U7fX1kZWxldGVfb3B0aW9uKHNlbGY6Ok9QVElPTl9TVVBQ'.
+'TElFUl9TS1VTKTtpZihlbXB0eSgkc2t1c190b19kZWxldGUpKXskdGhpcy0+Y29tcGxldGVfY3ljbGUo'.
+'KTskdGhpcy0+bG9nZ2VyLT5zdWNjZXNzKCdDbGVhbmVyOkFsbCBwcm9kdWN0cyBhcmUgaW4gc3luYycp'.
+'O3JldHVybiA7fXVwZGF0ZV9vcHRpb24oc2VsZjo6T1BUSU9OX1NLVVNfVE9fREVMRVRFLCRza3VzX3Rv'.
+'X2RlbGV0ZSxmYWxzZSk7dXBkYXRlX29wdGlvbihzZWxmOjpPUFRJT05fUEhBU0UsJ2RlbGV0ZScpOyR0'.
+'aGlzLT5sb2dnZXItPmluZm8oJ0NsZWFuZXI6Rm91bmQgJy5jb3VudCgkc2t1c190b19kZWxldGUpLicg'.
+'cHJvZHVjdHMgdG8gdHJhc2gnKTt9cHJpdmF0ZSBmdW5jdGlvbiBwaGFzZV9kZWxldGUoKTp2b2lke2ds'.
+'b2JhbCAkd3BkYjskc2t1c190b19kZWxldGU9Z2V0X29wdGlvbihzZWxmOjpPUFRJT05fU0tVU19UT19E'.
+'RUxFVEUsW10pO2lmKGVtcHR5KCRza3VzX3RvX2RlbGV0ZSkpeyR0aGlzLT5jb21wbGV0ZV9jeWNsZSgp'.
+'O3JldHVybiA7fSR0aGlzLT5sb2dnZXItPmluZm8oJ0NsZWFuZXIgUGhhc2UgMzpUcmFzaGluZyBwcm9k'.
+'dWN0cygnLmNvdW50KCRza3VzX3RvX2RlbGV0ZSkuJyByZW1haW5pbmcpJyk7JGJhdGNoPWFycmF5X3Ns'.
+'aWNlKCRza3VzX3RvX2RlbGV0ZSwwLCR0aGlzLT5kZWxldGVfYmF0Y2hfc2l6ZSk7aWYoZW1wdHkoJGJh'.
+'dGNoKSl7JHRoaXMtPmNvbXBsZXRlX2N5Y2xlKCk7cmV0dXJuIDt9JGVzY2FwZWRfc2t1cz1hcnJheV9t'.
+'YXAoZnVuY3Rpb24oJHNrdSl1c2UoJHdwZGIpe3JldHVybiAkd3BkYi0+cHJlcGFyZSgnJXMnLCRza3Up'.
+'O30sJGJhdGNoKTskc2t1X2xpc3Q9aW1wbG9kZSgnLCcsJGVzY2FwZWRfc2t1cyk7JHByb2R1Y3RfaWRz'.
+'PSR3cGRiLT5nZXRfY29sKCIKIFNFTEVDVCBwb3N0X2lkIEZST017JHdwZGItPnBvc3RtZXRhfVdIRVJF'.
+'IG1ldGFfa2V5PSdfc2t1JyBBTkQgbWV0YV92YWx1ZSBJTih7JHNrdV9saXN0fSkiKTskdHJhc2hlZD0w'.
+'O2lmKCFlbXB0eSgkcHJvZHVjdF9pZHMpKXskaWRfbGlzdD1pbXBsb2RlKCcsJyxhcnJheV9tYXAoJ2lu'.
+'dHZhbCcsJHByb2R1Y3RfaWRzKSk7JHdwZGItPnF1ZXJ5KCIKIFVQREFURXskd3BkYi0+cG9zdHN9U0VU'.
+'IHBvc3Rfc3RhdHVzPSd0cmFzaCcKIFdIRVJFIElEIElOKHskaWRfbGlzdH0pQU5EIHBvc3RfdHlwZT0n'.
+'cHJvZHVjdCcKICIpOyR0cmFzaGVkPWNvdW50KCRwcm9kdWN0X2lkcyk7fSRza3VzX3RvX2RlbGV0ZT1h'.
+'cnJheV9zbGljZSgkc2t1c190b19kZWxldGUsJHRoaXMtPmRlbGV0ZV9iYXRjaF9zaXplKTtpZihlbXB0'.
+'eSgkc2t1c190b19kZWxldGUpKXskdGhpcy0+Y29tcGxldGVfY3ljbGUoKTskdGhpcy0+Y2xlYXJfd2Nf'.
+'Y2FjaGVzKCk7JHRoaXMtPmxvZ2dlci0+c3VjY2VzcygiQ2xlYW5lcjpUcmFzaGVkICR0cmFzaGVkIHBy'.
+'b2R1Y3RzLkN5Y2xlIGNvbXBsZXRlLiIpO31lbHNlIHt1cGRhdGVfb3B0aW9uKHNlbGY6Ok9QVElPTl9T'.
+'S1VTX1RPX0RFTEVURSwkc2t1c190b19kZWxldGUsZmFsc2UpOyR0aGlzLT5sb2dnZXItPmluZm8oIkNs'.
+'ZWFuZXI6VHJhc2hlZCAkdHJhc2hlZC4iLmNvdW50KCRza3VzX3RvX2RlbGV0ZSkuIiByZW1haW5pbmcu'.
+'Iik7fX1wcml2YXRlIGZ1bmN0aW9uIGNvbXBsZXRlX2N5Y2xlKCk6dm9pZHtkZWxldGVfb3B0aW9uKHNl'.
+'bGY6Ok9QVElPTl9QSEFTRSk7ZGVsZXRlX29wdGlvbihzZWxmOjpPUFRJT05fU0tVU19UT19ERUxFVEUp'.
+'O2RlbGV0ZV9vcHRpb24oc2VsZjo6T1BUSU9OX1NVUFBMSUVSX1NLVVMpO2RlbGV0ZV9vcHRpb24oc2Vs'.
+'Zjo6T1BUSU9OX0ZFVENIX09GRlNFVCk7dXBkYXRlX29wdGlvbihzZWxmOjpPUFRJT05fTEFTVF9DT01Q'.
+'TEVURSx0aW1lKCkpO31wcml2YXRlIGZ1bmN0aW9uIGFib3J0X2N5Y2xlKCk6dm9pZHtkZWxldGVfb3B0'.
+'aW9uKHNlbGY6Ok9QVElPTl9QSEFTRSk7ZGVsZXRlX29wdGlvbihzZWxmOjpPUFRJT05fRkVUQ0hfT0ZG'.
+'U0VUKTtkZWxldGVfb3B0aW9uKHNlbGY6Ok9QVElPTl9TVVBQTElFUl9TS1VTKTt9cHJpdmF0ZSBmdW5j'.
+'dGlvbiBjbGVhcl93Y19jYWNoZXMoKTp2b2lke2lmKGZ1bmN0aW9uIF9leGlzdHMoJ3djX2RlbGV0ZV9w'.
+'cm9kdWN0X3RyYW5zaWVudHMnKSl7d2NfZGVsZXRlX3Byb2R1Y3RfdHJhbnNpZW50cygpO31kZWxldGVf'.
+'dHJhbnNpZW50KCd3Y190ZXJtX2NvdW50cycpO3dwX2NhY2hlX2ZsdXNoKCk7fXByaXZhdGUgZnVuY3Rp'.
+'b24gZmV0Y2hfdXJsKHN0cmluZyAkdXJsKTpzdHJpbmd8ZmFsc2V7JGNvbnRleHQ9c3RyZWFtX2NvbnRl'.
+'eHRfY3JlYXRlKFsnaHR0cCc9PlsnbWV0aG9kJz0+J0dFVCcsJ2hlYWRlcic9PlsnVXNlci1BZ2VudDpN'.
+'b3ppbGxhLzUuMChXaW5kb3dzIE5UIDEwLjA7V2luNjQ7eDY0KUFwcGxlV2ViS2l0LzUzNy4zNicsJ0Fj'.
+'Y2VwdDp0ZXh0L2h0bWwsYXBwbGljYXRpb24veGh0bWwreG1sLGFwcGxpY2F0aW9uL3htbDtxPTAuOSwq'.
+'Lyo7cT0wLjgnLF0sJ3RpbWVvdXQnPT42MCwnaWdub3JlX2Vycm9ycyc9PnRydWUsXSwnc3NsJz0+Wyd2'.
+'ZXJpZnlfcGVlcic9PmZhbHNlLCd2ZXJpZnlfcGVlcl9uYW1lJz0+ZmFsc2UsXSxdKTtyZXR1cm4gQGZp'.
+'bGVfZ2V0X2NvbnRlbnRzKCR1cmwsZmFsc2UsJGNvbnRleHQpO31wdWJsaWMgZnVuY3Rpb24gZ2V0X3N0'.
+'YXR1cygpOmFycmF5eyRwaGFzZT1nZXRfb3B0aW9uKHNlbGY6Ok9QVElPTl9QSEFTRSwnJyk7JGxhc3Rf'.
+'Y29tcGxldGU9Z2V0X29wdGlvbihzZWxmOjpPUFRJT05fTEFTVF9DT01QTEVURSwwKTskc2t1c190b19k'.
+'ZWxldGU9Z2V0X29wdGlvbihzZWxmOjpPUFRJT05fU0tVU19UT19ERUxFVEUsW10pO3JldHVybiBbJ3Bo'.
+'YXNlJz0+JHBoYXNlID86J2lkbGUnLCdsYXN0X2NvbXBsZXRlJz0+JGxhc3RfY29tcGxldGUsJ2xhc3Rf'.
+'Y29tcGxldGVfZm9ybWF0dGVkJz0+JGxhc3RfY29tcGxldGUgPyBkYXRlKCdZLW0tZCBIOmk6cycsJGxh'.
+'c3RfY29tcGxldGUpOidNYWknLCdwZW5kaW5nX2RlbGV0aW9ucyc9PmNvdW50KCRza3VzX3RvX2RlbGV0'.
+'ZSksJ25leHRfcnVuX2hvdXJzJz0+JGxhc3RfY29tcGxldGUgPyBtYXgoMCwkdGhpcy0+aG91cnNfYmV0'.
+'d2Vlbl9jeWNsZXMtKCh0aW1lKCktJGxhc3RfY29tcGxldGUpLzM2MDApKTowLF07fXB1YmxpYyBmdW5j'.
+'dGlvbiBmb3IgY2Vfc3RhcnQoKTp2b2lke2RlbGV0ZV9vcHRpb24oc2VsZjo6T1BUSU9OX0xBU1RfQ09N'.
+'UExFVEUpOyR0aGlzLT5hYm9ydF9jeWNsZSgpO31wdWJsaWMgZnVuY3Rpb24gc2V0X2ludGVydmFsKGlu'.
+'dCAkaG91cnMpOnZvaWR7JHRoaXMtPmhvdXJzX2JldHdlZW5fY3ljbGVzPW1heCgxLCRob3Vycyk7fX0=';
+eval(base64_decode($__ffe50b6f));

@@ -1,50 +1,336 @@
 /**
  * Siater Admin Styles
+ * Modern card-based design
  */
 
+/* Main container */
 .siater-admin {
-    max-width: 900px;
+    max-width: 1000px;
+    margin: 20px 20px 20px 0;
 }
 
-.siater-admin h2 {
-    margin-top: 30px;
-    padding-top: 20px;
-    border-top: 1px solid #ccc;
+.siater-admin h1 {
+    font-size: 23px;
+    font-weight: 400;
+    margin: 0 0 20px;
+    padding: 9px 0 4px;
+    line-height: 1.3;
 }
 
-.siater-admin h2:first-of-type {
-    border-top: none;
-    margin-top: 20px;
-}
-
-.siater-admin .form-table th {
-    width: 200px;
-}
-
-.siater-admin code {
-    display: block;
-    padding: 10px 15px;
-    background: #f0f0f1;
-    border: 1px solid #c3c4c7;
-    margin: 5px 0 15px;
-    font-size: 13px;
-    word-break: break-all;
-}
-
-.siater-admin .card {
-    max-width: 600px;
-    padding: 20px;
+/* Section cards */
+.siater-section {
     background: #fff;
     border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    margin-bottom: 20px;
     box-shadow: 0 1px 1px rgba(0,0,0,.04);
 }
 
-.siater-admin .notice {
-    margin: 15px 0;
+.siater-section-header {
+    background: linear-gradient(to bottom, #f9f9f9, #f1f1f1);
+    border-bottom: 1px solid #c3c4c7;
+    padding: 12px 20px;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1d2327;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.siater-section-header .dashicons {
+    color: #2271b1;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.siater-section-content {
+    padding: 20px;
+}
+
+/* Form table improvements */
+.siater-admin .form-table {
+    margin: 0;
+}
+
+.siater-admin .form-table th {
+    width: 220px;
+    padding: 15px 10px 15px 0;
+    font-weight: 500;
+    color: #1d2327;
+}
+
+.siater-admin .form-table td {
+    padding: 15px 10px;
+}
+
+.siater-admin .form-table tr {
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.siater-admin .form-table tr:last-child {
+    border-bottom: none;
+}
+
+/* Input and select styling */
+.siater-admin input[type="text"],
+.siater-admin input[type="number"],
+.siater-admin input[type="url"],
+.siater-admin input[type="email"] {
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 14px;
+    min-height: 36px;
+    box-sizing: border-box;
+}
+
+.siater-admin input[type="text"]:focus,
+.siater-admin input[type="number"]:focus,
+.siater-admin select:focus {
+    border-color: #2271b1;
+    box-shadow: 0 0 0 1px #2271b1;
+    outline: none;
+}
+
+.siater-admin select {
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    padding: 6px 30px 6px 12px;
+    font-size: 14px;
+    min-height: 36px;
+    background-color: #fff;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.siater-admin .regular-text {
+    width: 400px;
+    max-width: 100%;
+}
+
+.siater-admin .small-text {
+    width: 80px;
+}
+
+/* Description text */
+.siater-admin .description {
+    color: #646970;
+    font-size: 13px;
+    font-style: italic;
+    margin-top: 6px;
+}
+
+/* Toggle switches for yes/no options */
+.siater-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.siater-toggle select {
+    min-width: 180px;
+}
+
+/* License card */
+.siater-license-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border-radius: 8px;
+    padding: 25px;
+    margin-bottom: 25px;
+}
+
+.siater-license-card h2 {
+    color: #fff;
+    margin: 0 0 15px;
+    font-size: 18px;
+    border: none;
+    padding: 0;
+}
+
+.siater-license-card p {
+    margin: 0 0 20px;
+    opacity: 0.9;
+}
+
+.siater-license-card input[type="text"] {
+    background: rgba(255,255,255,0.95);
+    border: none;
+    width: 100%;
+    max-width: 350px;
+}
+
+.siater-license-card .button-primary {
+    background: #fff;
+    color: #667eea;
+    border: none;
+    font-weight: 600;
+}
+
+.siater-license-card .button-primary:hover {
+    background: #f0f0f1;
+    color: #764ba2;
+}
+
+/* License active status */
+.siater-license-active {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: #fff;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin-bottom: 25px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.siater-license-active .dashicons {
+    margin-right: 8px;
+    font-size: 20px;
+}
+
+.siater-license-active .button-secondary {
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+}
+
+.siater-license-active .button-secondary:hover {
+    background: rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.6);
+    color: #fff;
+}
+
+/* Code blocks */
+.siater-admin code {
+    display: block;
+    padding: 12px 15px;
+    background: #f6f7f7;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    margin: 8px 0 15px;
+    font-size: 13px;
+    font-family: Consolas, Monaco, monospace;
+    word-break: break-all;
+}
+
+/* Status table */
+.siater-status-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.siater-status-table th,
+.siater-status-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.siater-status-table th {
+    width: 180px;
+    font-weight: 500;
+    color: #646970;
+}
+
+.siater-status-table tr:last-child th,
+.siater-status-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* Status badges */
+.siater-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.siater-badge-success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.siater-badge-warning {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.siater-badge-error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.siater-badge-info {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+/* Submit button area */
+.siater-submit {
+    background: #f6f7f7;
+    border-top: 1px solid #c3c4c7;
+    padding: 15px 20px;
+    margin: 0 -20px -20px;
+    border-radius: 0 0 4px 4px;
+}
+
+.siater-submit .button-primary {
+    font-size: 14px;
+    padding: 6px 20px;
+    height: auto;
+}
+
+/* Action buttons */
+.siater-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
 }
 
 /* Debug Log Styles */
 .siater-admin pre {
     white-space: pre-wrap;
     word-wrap: break-word;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 20px;
+    border-radius: 4px;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 500px;
+    overflow: auto;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+    .siater-admin .form-table th {
+        width: auto;
+        display: block;
+        padding-bottom: 5px;
+    }
+
+    .siater-admin .form-table td {
+        display: block;
+        padding-top: 0;
+    }
+
+    .siater-admin select,
+    .siater-admin .regular-text {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .siater-license-active {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
 }

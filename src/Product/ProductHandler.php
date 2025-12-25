@@ -1,352 +1,96 @@
 <?php
-/**
- * Product Handler
- *
- * Handles creating and updating WooCommerce products
- * Uses SKU (cod) to check if product exists instead of custom table
- */
-
-namespace Siater\Product;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-
-class ProductHandler {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Image handler
-     */
-    private ImageHandler $image_handler;
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-        $this->image_handler = new ImageHandler($settings);
-    }
-
-    /**
-     * Create or update a simple product
-     *
-     * @param array $data Product data from feed
-     * @return int|false Product ID or false on failure
-     */
-    public function sync_simple(array $data): int|false {
-        $sku = $data['cod'] ?? '';
-
-        if (empty($sku)) {
-            $this->logger->error('Cannot sync product without SKU');
-            return false;
-        }
-
-        // Check if product exists by SKU
-        $existing_id = wc_get_product_id_by_sku($sku);
-
-        if ($existing_id) {
-            return $this->update_simple($existing_id, $data);
-        }
-
-        return $this->create_simple($data);
-    }
-
-    /**
-     * Create a new simple product
-     */
-    private function create_simple(array $data): int|false {
-        try {
-            $product = new \WC_Product_Simple();
-
-            $product->set_name($data['descr'] ?? 'Prodotto senza nome');
-            $product->set_sku($data['cod']);
-            $product->set_status('publish');
-            $product->set_catalog_visibility('visible');
-
-            // Description
-            if (!empty($data['memo'])) {
-                $product->set_description($data['memo']);
-            }
-
-            // Price
-            $product->set_regular_price($data['prezzo']);
-            if (!empty($data['sale_price'])) {
-                $product->set_sale_price($data['sale_price']);
-            }
-
-            // Stock
-            $product->set_manage_stock(true);
-            $product->set_stock_quantity($data['stock'] ?? 0);
-            $product->set_stock_status($data['stock'] > 0 ? 'instock' : 'outofstock');
-
-            // Weight
-            if (!empty($data['peso'])) {
-                $product->set_weight($data['peso']);
-            }
-
-            // Save product
-            $product_id = $product->save();
-
-            if (!$product_id) {
-                $this->logger->error("Failed to create product: {$data['cod']}");
-                return false;
-            }
-
-            // Set categories
-            $this->set_categories($product_id, $data);
-
-            // Set brand
-            $this->set_brand($product_id, $data);
-
-            // Set images
-            $this->image_handler->set_product_images($product_id, $data);
-
-            $this->logger->success("Created simple product: {$data['cod']} (ID: $product_id)");
-
-            return $product_id;
-
-        } catch (\Exception $e) {
-            $this->logger->error("Error creating product {$data['cod']}: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Update an existing simple product
-     */
-    private function update_simple(int $product_id, array $data): int|false {
-        try {
-            $product = wc_get_product($product_id);
-
-            if (!$product) {
-                $this->logger->error("Product not found for update: $product_id");
-                return false;
-            }
-
-            // Update basic info
-            $product->set_name($data['descr'] ?? $product->get_name());
-
-            if (!empty($data['memo'])) {
-                $product->set_description($data['memo']);
-            }
-
-            // Update price
-            $product->set_regular_price($data['prezzo']);
-            if (!empty($data['sale_price'])) {
-                $product->set_sale_price($data['sale_price']);
-            } else {
-                $product->set_sale_price('');
-            }
-
-            // Update stock
-            $product->set_stock_quantity($data['stock'] ?? 0);
-            $product->set_stock_status($data['stock'] > 0 ? 'instock' : 'outofstock');
-
-            // Weight
-            if (!empty($data['peso'])) {
-                $product->set_weight($data['peso']);
-            }
-
-            // Save
-            $product->save();
-
-            // Update categories
-            $this->set_categories($product_id, $data);
-
-            // Update brand
-            $this->set_brand($product_id, $data);
-
-            // Update images if enabled
-            if ($this->settings->get('aggiorna_immagini', 0)) {
-                $this->image_handler->set_product_images($product_id, $data);
-            }
-
-            $this->logger->info("Updated simple product: {$data['cod']} (ID: $product_id)");
-
-            return $product_id;
-
-        } catch (\Exception $e) {
-            $this->logger->error("Error updating product {$data['cod']}: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Create or update a variable product (parent only)
-     *
-     * @param array $data Product data from feed
-     * @return int|false Product ID or false on failure
-     */
-    public function sync_variable(array $data): int|false {
-        $sku = $data['cod'] ?? '';
-
-        if (empty($sku)) {
-            $this->logger->error('Cannot sync variable product without SKU');
-            return false;
-        }
-
-        // For variable products, we use gruppov or cod as parent SKU
-        $parent_sku = $data['gruppov'] ?? $sku;
-
-        // Check if parent product exists
-        $existing_id = wc_get_product_id_by_sku($parent_sku);
-
-        if ($existing_id) {
-            return $existing_id; // Parent exists, just return ID
-        }
-
-        return $this->create_variable($data, $parent_sku);
-    }
-
-    /**
-     * Create a variable product (parent)
-     */
-    private function create_variable(array $data, string $parent_sku): int|false {
-        try {
-            $product = new \WC_Product_Variable();
-
-            $product->set_name($data['descr'] ?? 'Prodotto senza nome');
-            $product->set_sku($parent_sku);
-            $product->set_status('publish');
-            $product->set_catalog_visibility('visible');
-
-            // Description
-            if (!empty($data['memo'])) {
-                $product->set_description($data['memo']);
-            }
-
-            // Weight
-            if (!empty($data['peso'])) {
-                $product->set_weight($data['peso']);
-            }
-
-            // Save product
-            $product_id = $product->save();
-
-            if (!$product_id) {
-                $this->logger->error("Failed to create variable product: $parent_sku");
-                return false;
-            }
-
-            // Set categories
-            $this->set_categories($product_id, $data);
-
-            // Set brand
-            $this->set_brand($product_id, $data);
-
-            // Set images
-            $this->image_handler->set_product_images($product_id, $data);
-
-            $this->logger->success("Created variable product: $parent_sku (ID: $product_id)");
-
-            return $product_id;
-
-        } catch (\Exception $e) {
-            $this->logger->error("Error creating variable product $parent_sku: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Set product categories
-     */
-    private function set_categories(int $product_id, array $data): void {
-        if (!$this->settings->get('sincronizza_categorie', 1)) {
-            return;
-        }
-
-        if (empty($data['categories'])) {
-            return;
-        }
-
-        $category_ids = [];
-        $parent_id = 0;
-
-        // Create hierarchical categories
-        foreach ($data['categories'] as $category_name) {
-            $category_name = trim($category_name);
-            if (empty($category_name)) {
-                continue;
-            }
-
-            $term = get_term_by('name', $category_name, 'product_cat');
-
-            if (!$term) {
-                // Create category
-                $result = wp_insert_term($category_name, 'product_cat', [
-                    'parent' => $parent_id,
-                ]);
-
-                if (!is_wp_error($result)) {
-                    $parent_id = $result['term_id'];
-                    $category_ids[] = $parent_id;
-                }
-            } else {
-                $parent_id = $term->term_id;
-                $category_ids[] = $parent_id;
-            }
-        }
-
-        if (!empty($category_ids)) {
-            wp_set_object_terms($product_id, $category_ids, 'product_cat');
-        }
-    }
-
-    /**
-     * Set product brand (requires Perfect Brands for WooCommerce)
-     */
-    private function set_brand(int $product_id, array $data): void {
-        if (empty($data['marca'])) {
-            return;
-        }
-
-        // Check if Perfect Brands taxonomy exists
-        if (!taxonomy_exists('pwb-brand')) {
-            return;
-        }
-
-        $brand_name = $data['marca'];
-
-        // Get or create brand term
-        $term = get_term_by('name', $brand_name, 'pwb-brand');
-
-        if (!$term) {
-            $result = wp_insert_term($brand_name, 'pwb-brand');
-            if (!is_wp_error($result)) {
-                $term_id = $result['term_id'];
-            } else {
-                return;
-            }
-        } else {
-            $term_id = $term->term_id;
-        }
-
-        wp_set_object_terms($product_id, [$term_id], 'pwb-brand');
-    }
-
-    /**
-     * Check if product exists by SKU
-     */
-    public function product_exists(string $sku): bool {
-        return wc_get_product_id_by_sku($sku) > 0;
-    }
-
-    /**
-     * Get product ID by SKU
-     */
-    public function get_product_id(string $sku): int {
-        return wc_get_product_id_by_sku($sku) ?: 0;
-    }
-}
+/* Siater Connector - Protected Code */
+$__ee695d5a='bmFtZXNwYWNlIFNpYXRlclxQcm9kdWN0O2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVy'.
+'XENvcmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7Y2xhc3MgUHJvZHVjdEhhbmRsZXJ7'.
+'cHJpdmF0ZSBTZXR0aW5ncyAkc2V0dGluZ3M7cHJpdmF0ZSBMb2dnZXIgJGxvZ2dlcjtwcml2YXRlIElt'.
+'YWdlSGFuZGxlciAkaW1hZ2VfaGFuZGxlcjtwdWJsaWMgZnVuY3Rpb24gX19jb25zdHJ1Y3QoU2V0dGlu'.
+'Z3MgJHNldHRpbmdzKXskdGhpcy0+c2V0dGluZ3M9JHNldHRpbmdzOyR0aGlzLT5sb2dnZXI9TG9nZ2Vy'.
+'OjppbnN0YW5jZSgpOyR0aGlzLT5pbWFnZV9oYW5kbGVyPW5ldyBJbWFnZUhhbmRsZXIoJHNldHRpbmdz'.
+'KTt9cHVibGljIGZ1bmN0aW9uIHN5bmNfc2ltcGxlKGFycmF5ICRkYXRhKTppbnR8ZmFsc2V7JHNrdT0k'.
+'ZGF0YVsnc2t1J10/PyAkZGF0YVsnY29kJ10/PyAnJztpZihlbXB0eSgkc2t1KSl7JHRoaXMtPmxvZ2dl'.
+'ci0+ZXJyb3IoJ0Nhbm5vdCBzeW5jIHByb2R1Y3Qgd2l0aG91dCBTS1UnKTtyZXR1cm4gZmFsc2U7fSRl'.
+'eGlzdGluZ19pZD13Y19nZXRfcHJvZHVjdF9pZF9ieV9za3UoJHNrdSk7aWYoJGV4aXN0aW5nX2lkKXty'.
+'ZXR1cm4gJHRoaXMtPnVwZGF0ZV9zaW1wbGUoJGV4aXN0aW5nX2lkLCRkYXRhKTt9cmV0dXJuICR0aGlz'.
+'LT5jcmVhdGVfc2ltcGxlKCRkYXRhKTt9cHJpdmF0ZSBmdW5jdGlvbiBjcmVhdGVfc2ltcGxlKGFycmF5'.
+'ICRkYXRhKTppbnR8ZmFsc2V7dHJ5IHskc2t1PSRkYXRhWydza3UnXT8/ICRkYXRhWydjb2QnXT8/ICcn'.
+'OyRwcm9kdWN0PW5ldyBcV0NfUHJvZHVjdF9TaW1wbGUoKTskcHJvZHVjdC0+c2V0X25hbWUoJGRhdGFb'.
+'J2Rlc2NyJ10/PyAnUHJvZG90dG8gc2VuemEgbm9tZScpOyRwcm9kdWN0LT5zZXRfc2t1KCRza3UpOyRw'.
+'cm9kdWN0LT5zZXRfc3RhdHVzKCdwdWJsaXNoJyk7JHByb2R1Y3QtPnNldF9jYXRhbG9nX3Zpc2liaWxp'.
+'dHkoJ3Zpc2libGUnKTtpZighZW1wdHkoJGRhdGFbJ21lbW8nXSkpeyRwcm9kdWN0LT5zZXRfZGVzY3Jp'.
+'cHRpb24oJGRhdGFbJ21lbW8nXSk7fSRwcm9kdWN0LT5zZXRfcmVndWxhcl9wcmljZSgkZGF0YVsncHJl'.
+'enpvJ10pO2lmKCFlbXB0eSgkZGF0YVsnc2FsZV9wcmljZSddKSl7JHByb2R1Y3QtPnNldF9zYWxlX3By'.
+'aWNlKCRkYXRhWydzYWxlX3ByaWNlJ10pO30kcHJvZHVjdC0+c2V0X21hbmFnZV9zdG9jayh0cnVlKTsk'.
+'cHJvZHVjdC0+c2V0X3N0b2NrX3F1YW50aXR5KCRkYXRhWydzdG9jayddPz8gMCk7JHByb2R1Y3QtPnNl'.
+'dF9zdG9ja19zdGF0dXMoJGRhdGFbJ3N0b2NrJ10+MCA/ICdpbnN0b2NrJzonb3V0b2ZzdG9jaycpO2lm'.
+'KCFlbXB0eSgkZGF0YVsncGVzbyddKSl7JHByb2R1Y3QtPnNldF93ZWlnaHQoJGRhdGFbJ3Blc28nXSk7'.
+'fSRwcm9kdWN0X2lkPSRwcm9kdWN0LT5zYXZlKCk7aWYoISRwcm9kdWN0X2lkKXskdGhpcy0+bG9nZ2Vy'.
+'LT5lcnJvcigiRmFpbGVkIHRvIGNyZWF0ZSBwcm9kdWN0OiRza3UiKTtyZXR1cm4gZmFsc2U7fSR0aGlz'.
+'LT5zZXRfY2F0ZWdvcmllcygkcHJvZHVjdF9pZCwkZGF0YSk7JHRoaXMtPnNldF9icmFuZCgkcHJvZHVj'.
+'dF9pZCwkZGF0YSk7JHRoaXMtPmltYWdlX2hhbmRsZXItPnNldF9wcm9kdWN0X2ltYWdlcygkcHJvZHVj'.
+'dF9pZCwkZGF0YSk7JHRoaXMtPmxvZ2dlci0+c3VjY2VzcygiQ3JlYXRlZCBzaW1wbGUgcHJvZHVjdDok'.
+'c2t1KElEOiRwcm9kdWN0X2lkKSIpO3JldHVybiAkcHJvZHVjdF9pZDt9Y2F0Y2goXEV4Y2VwdGlvbiAk'.
+'ZSl7JHNrdT0kZGF0YVsnc2t1J10/PyAkZGF0YVsnY29kJ10/PyAndW5rbm93bic7JHRoaXMtPmxvZ2dl'.
+'ci0+ZXJyb3IoIkVycm9yIGNyZWF0aW5nIHByb2R1Y3QgJHNrdToiLiRlLT5nZXRNZXNzYWdlKCkpO3Jl'.
+'dHVybiBmYWxzZTt9fXByaXZhdGUgZnVuY3Rpb24gdXBkYXRlX3NpbXBsZShpbnQgJHByb2R1Y3RfaWQs'.
+'YXJyYXkgJGRhdGEpOmludHxmYWxzZXt0cnkgeyRwcm9kdWN0PXdjX2dldF9wcm9kdWN0KCRwcm9kdWN0'.
+'X2lkKTtpZighJHByb2R1Y3QpeyR0aGlzLT5sb2dnZXItPmVycm9yKCJQcm9kdWN0IG5vdCBmb3VuZCBm'.
+'b3IgdXBkYXRlOiRwcm9kdWN0X2lkIik7cmV0dXJuIGZhbHNlO30kcHJvZHVjdC0+c2V0X25hbWUoJGRh'.
+'dGFbJ2Rlc2NyJ10/PyAkcHJvZHVjdC0+Z2V0X25hbWUoKSk7aWYoIWVtcHR5KCRkYXRhWydtZW1vJ10p'.
+'KXskcHJvZHVjdC0+c2V0X2Rlc2NyaXB0aW9uKCRkYXRhWydtZW1vJ10pO30kcHJvZHVjdC0+c2V0X3Jl'.
+'Z3VsYXJfcHJpY2UoJGRhdGFbJ3ByZXp6byddKTtpZighZW1wdHkoJGRhdGFbJ3NhbGVfcHJpY2UnXSkp'.
+'eyRwcm9kdWN0LT5zZXRfc2FsZV9wcmljZSgkZGF0YVsnc2FsZV9wcmljZSddKTt9ZWxzZSB7JHByb2R1'.
+'Y3QtPnNldF9zYWxlX3ByaWNlKCcnKTt9JHByb2R1Y3QtPnNldF9zdG9ja19xdWFudGl0eSgkZGF0YVsn'.
+'c3RvY2snXT8/IDApOyRwcm9kdWN0LT5zZXRfc3RvY2tfc3RhdHVzKCRkYXRhWydzdG9jayddPjAgPyAn'.
+'aW5zdG9jayc6J291dG9mc3RvY2snKTtpZighZW1wdHkoJGRhdGFbJ3Blc28nXSkpeyRwcm9kdWN0LT5z'.
+'ZXRfd2VpZ2h0KCRkYXRhWydwZXNvJ10pO30kcHJvZHVjdC0+c2F2ZSgpOyR0aGlzLT5zZXRfY2F0ZWdv'.
+'cmllcygkcHJvZHVjdF9pZCwkZGF0YSk7JHRoaXMtPnNldF9icmFuZCgkcHJvZHVjdF9pZCwkZGF0YSk7'.
+'aWYoJHRoaXMtPnNldHRpbmdzLT5nZXQoJ2FnZ2lvcm5hX2ltbWFnaW5pJywwKSl7JHRoaXMtPmltYWdl'.
+'X2hhbmRsZXItPnNldF9wcm9kdWN0X2ltYWdlcygkcHJvZHVjdF9pZCwkZGF0YSk7fSRza3U9JGRhdGFb'.
+'J3NrdSddPz8gJGRhdGFbJ2NvZCddPz8gJyc7JHRoaXMtPmxvZ2dlci0+aW5mbygiVXBkYXRlZCBzaW1w'.
+'bGUgcHJvZHVjdDokc2t1KElEOiRwcm9kdWN0X2lkKSIpO3JldHVybiAkcHJvZHVjdF9pZDt9Y2F0Y2go'.
+'XEV4Y2VwdGlvbiAkZSl7JHNrdT0kZGF0YVsnc2t1J10/PyAkZGF0YVsnY29kJ10/PyAndW5rbm93bic7'.
+'JHRoaXMtPmxvZ2dlci0+ZXJyb3IoIkVycm9yIHVwZGF0aW5nIHByb2R1Y3QgJHNrdToiLiRlLT5nZXRN'.
+'ZXNzYWdlKCkpO3JldHVybiBmYWxzZTt9fXB1YmxpYyBmdW5jdGlvbiBzeW5jX3ZhcmlhYmxlKGFycmF5'.
+'ICRkYXRhKTppbnR8ZmFsc2V7JHNrdT0kZGF0YVsnc2t1J10/PyAkZGF0YVsnY29kJ10/PyAnJztpZihl'.
+'bXB0eSgkc2t1KSl7JHRoaXMtPmxvZ2dlci0+ZXJyb3IoJ0Nhbm5vdCBzeW5jIHZhcmlhYmxlIHByb2R1'.
+'Y3Qgd2l0aG91dCBTS1UnKTtyZXR1cm4gZmFsc2U7fSRwYXJlbnRfc2t1PSRza3U7JGV4aXN0aW5nX2lk'.
+'PXdjX2dldF9wcm9kdWN0X2lkX2J5X3NrdSgkcGFyZW50X3NrdSk7aWYoJGV4aXN0aW5nX2lkKXtyZXR1'.
+'cm4gJGV4aXN0aW5nX2lkO31yZXR1cm4gJHRoaXMtPmNyZWF0ZV92YXJpYWJsZSgkZGF0YSwkcGFyZW50'.
+'X3NrdSk7fXByaXZhdGUgZnVuY3Rpb24gY3JlYXRlX3ZhcmlhYmxlKGFycmF5ICRkYXRhLHN0cmluZyAk'.
+'cGFyZW50X3NrdSk6aW50fGZhbHNle3RyeSB7JHByb2R1Y3Q9bmV3IFxXQ19Qcm9kdWN0X1ZhcmlhYmxl'.
+'KCk7JHByb2R1Y3QtPnNldF9uYW1lKCRkYXRhWydkZXNjciddPz8gJ1Byb2RvdHRvIHNlbnphIG5vbWUn'.
+'KTskcHJvZHVjdC0+c2V0X3NrdSgkcGFyZW50X3NrdSk7JHByb2R1Y3QtPnNldF9zdGF0dXMoJ3B1Ymxp'.
+'c2gnKTskcHJvZHVjdC0+c2V0X2NhdGFsb2dfdmlzaWJpbGl0eSgndmlzaWJsZScpO2lmKCFlbXB0eSgk'.
+'ZGF0YVsnbWVtbyddKSl7JHByb2R1Y3QtPnNldF9kZXNjcmlwdGlvbigkZGF0YVsnbWVtbyddKTt9aWYo'.
+'IWVtcHR5KCRkYXRhWydwZXNvJ10pKXskcHJvZHVjdC0+c2V0X3dlaWdodCgkZGF0YVsncGVzbyddKTt9'.
+'JHByb2R1Y3RfaWQ9JHByb2R1Y3QtPnNhdmUoKTtpZighJHByb2R1Y3RfaWQpeyR0aGlzLT5sb2dnZXIt'.
+'PmVycm9yKCJGYWlsZWQgdG8gY3JlYXRlIHZhcmlhYmxlIHByb2R1Y3Q6JHBhcmVudF9za3UiKTtyZXR1'.
+'cm4gZmFsc2U7fSR0aGlzLT5zZXRfY2F0ZWdvcmllcygkcHJvZHVjdF9pZCwkZGF0YSk7JHRoaXMtPnNl'.
+'dF9icmFuZCgkcHJvZHVjdF9pZCwkZGF0YSk7JHRoaXMtPmltYWdlX2hhbmRsZXItPnNldF9wcm9kdWN0'.
+'X2ltYWdlcygkcHJvZHVjdF9pZCwkZGF0YSk7JHRoaXMtPmxvZ2dlci0+c3VjY2VzcygiQ3JlYXRlZCB2'.
+'YXJpYWJsZSBwcm9kdWN0OiRwYXJlbnRfc2t1KElEOiRwcm9kdWN0X2lkKSIpO3JldHVybiAkcHJvZHVj'.
+'dF9pZDt9Y2F0Y2goXEV4Y2VwdGlvbiAkZSl7JHRoaXMtPmxvZ2dlci0+ZXJyb3IoIkVycm9yIGNyZWF0'.
+'aW5nIHZhcmlhYmxlIHByb2R1Y3QgJHBhcmVudF9za3U6Ii4kZS0+Z2V0TWVzc2FnZSgpKTtyZXR1cm4g'.
+'ZmFsc2U7fX1wcml2YXRlIGZ1bmN0aW9uIHNldF9jYXRlZ29yaWVzKGludCAkcHJvZHVjdF9pZCxhcnJh'.
+'eSAkZGF0YSk6dm9pZHtpZighJHRoaXMtPnNldHRpbmdzLT5nZXQoJ3NpbmNyb25penphX2NhdGVnb3Jp'.
+'ZScsMSkpe3JldHVybiA7fWlmKGVtcHR5KCRkYXRhWydjYXRlZ29yaWVzJ10pKXtyZXR1cm4gO30kY2F0'.
+'ZWdvcnlfaWRzPVtdOyRwYXJlbnRfaWQ9MDtmb3IgZWFjaCgkZGF0YVsnY2F0ZWdvcmllcyddYXMgJGNh'.
+'dGVnb3J5X25hbWUpeyRjYXRlZ29yeV9uYW1lPXRyaW0oJGNhdGVnb3J5X25hbWUpO2lmKGVtcHR5KCRj'.
+'YXRlZ29yeV9uYW1lKSl7Y29udGludWU7fSR0ZXJtPWdldF90ZXJtX2J5KCduYW1lJywkY2F0ZWdvcnlf'.
+'bmFtZSwncHJvZHVjdF9jYXQnKTtpZighJHRlcm0peyRyZXN1bHQ9d3BfaW5zZXJ0X3Rlcm0oJGNhdGVn'.
+'b3J5X25hbWUsJ3Byb2R1Y3RfY2F0JyxbJ3BhcmVudCc9PiRwYXJlbnRfaWQsXSk7aWYoIWlzX3dwX2Vy'.
+'cm9yKCRyZXN1bHQpKXskcGFyZW50X2lkPSRyZXN1bHRbJ3Rlcm1faWQnXTskY2F0ZWdvcnlfaWRzW109'.
+'JHBhcmVudF9pZDt9fWVsc2UgeyRwYXJlbnRfaWQ9JHRlcm0tPnRlcm1faWQ7JGNhdGVnb3J5X2lkc1td'.
+'PSRwYXJlbnRfaWQ7fX1pZighZW1wdHkoJGNhdGVnb3J5X2lkcykpe3dwX3NldF9vYmplY3RfdGVybXMo'.
+'JHByb2R1Y3RfaWQsJGNhdGVnb3J5X2lkcywncHJvZHVjdF9jYXQnKTt9fXByaXZhdGUgZnVuY3Rpb24g'.
+'c2V0X2JyYW5kKGludCAkcHJvZHVjdF9pZCxhcnJheSAkZGF0YSk6dm9pZHtpZihlbXB0eSgkZGF0YVsn'.
+'bWFyY2EnXSkpe3JldHVybiA7fWlmKCF0YXhvbm9teV9leGlzdHMoJ3B3Yi1icmFuZCcpKXtyZXR1cm4g'.
+'O30kYnJhbmRfbmFtZT0kZGF0YVsnbWFyY2EnXTskdGVybT1nZXRfdGVybV9ieSgnbmFtZScsJGJyYW5k'.
+'X25hbWUsJ3B3Yi1icmFuZCcpO2lmKCEkdGVybSl7JHJlc3VsdD13cF9pbnNlcnRfdGVybSgkYnJhbmRf'.
+'bmFtZSwncHdiLWJyYW5kJyk7aWYoIWlzX3dwX2Vycm9yKCRyZXN1bHQpKXskdGVybV9pZD0kcmVzdWx0'.
+'Wyd0ZXJtX2lkJ107fWVsc2Uge3JldHVybiA7fX1lbHNlIHskdGVybV9pZD0kdGVybS0+dGVybV9pZDt9'.
+'d3Bfc2V0X29iamVjdF90ZXJtcygkcHJvZHVjdF9pZCxbJHRlcm1faWRdLCdwd2ItYnJhbmQnKTt9cHVi'.
+'bGljIGZ1bmN0aW9uIHByb2R1Y3RfZXhpc3RzKHN0cmluZyAkc2t1KTpib29se3JldHVybiB3Y19nZXRf'.
+'cHJvZHVjdF9pZF9ieV9za3UoJHNrdSk+MDt9cHVibGljIGZ1bmN0aW9uIGdldF9wcm9kdWN0X2lkKHN0'.
+'cmluZyAkc2t1KTppbnR7cmV0dXJuIHdjX2dldF9wcm9kdWN0X2lkX2J5X3NrdSgkc2t1KT86MDt9fQ==';
+eval(base64_decode($__ee695d5a));

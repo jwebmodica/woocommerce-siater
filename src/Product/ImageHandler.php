@@ -1,229 +1,62 @@
 <?php
-/**
- * Image Handler
- *
- * Handles product image uploads and management
- */
-
-namespace Siater\Product;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-
-class ImageHandler {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-    }
-
-    /**
-     * Set product images (main + gallery)
-     */
-    public function set_product_images(int $product_id, array $data): void {
-        $main_image = $data['foto'] ?? '';
-        $gallery = $data['gallery'] ?? [];
-
-        // Upload main image
-        if (!empty($main_image) && $this->is_valid_image_url($main_image)) {
-            $attachment_id = $this->upload_image($main_image, $product_id);
-            if ($attachment_id) {
-                set_post_thumbnail($product_id, $attachment_id);
-            }
-        }
-
-        // Upload gallery images
-        $gallery_ids = [];
-        foreach ($gallery as $image_url) {
-            if (!empty($image_url) && $this->is_valid_image_url($image_url)) {
-                $attachment_id = $this->upload_image($image_url, $product_id);
-                if ($attachment_id) {
-                    $gallery_ids[] = $attachment_id;
-                }
-            }
-        }
-
-        if (!empty($gallery_ids)) {
-            update_post_meta($product_id, '_product_image_gallery', implode(',', $gallery_ids));
-        }
-    }
-
-    /**
-     * Set variation image
-     */
-    public function set_variation_image(int $variation_id, array $data): void {
-        $variation_images = $data['variation_images'] ?? [];
-
-        // Find first valid image
-        foreach ($variation_images as $image_url) {
-            if (!empty($image_url) && $this->is_valid_image_url($image_url)) {
-                $attachment_id = $this->upload_image($image_url, $variation_id);
-                if ($attachment_id) {
-                    update_post_meta($variation_id, '_thumbnail_id', $attachment_id);
-                    return;
-                }
-            }
-        }
-    }
-
-    /**
-     * Upload image to media library
-     *
-     * @param string $url Image URL
-     * @param int $post_id Associated post ID
-     * @return int|false Attachment ID or false
-     */
-    public function upload_image(string $url, int $post_id): int|false {
-        // Get filename from URL
-        $filename = $this->get_filename_from_url($url);
-
-        if (!$filename) {
-            return false;
-        }
-
-        // Check if already in media library
-        $existing = $this->find_in_media($filename);
-        if ($existing) {
-            return $existing;
-        }
-
-        // Download image
-        require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/media.php';
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-
-        // Download to temp
-        $temp_file = download_url($url, 30);
-
-        if (is_wp_error($temp_file)) {
-            $this->logger->warning("Failed to download image: $url - " . $temp_file->get_error_message());
-            return false;
-        }
-
-        // Prepare file array
-        $file_array = [
-            'name' => $filename,
-            'tmp_name' => $temp_file,
-        ];
-
-        // Upload to media library
-        $attachment_id = media_handle_sideload($file_array, $post_id);
-
-        // Clean up temp file
-        if (file_exists($temp_file)) {
-            @unlink($temp_file);
-        }
-
-        if (is_wp_error($attachment_id)) {
-            $this->logger->warning("Failed to upload image: $url - " . $attachment_id->get_error_message());
-            return false;
-        }
-
-        return $attachment_id;
-    }
-
-    /**
-     * Check if URL is a valid image
-     */
-    private function is_valid_image_url(string $url): bool {
-        if (empty($url)) {
-            return false;
-        }
-
-        // Skip placeholder images
-        if (strpos($url, 'img_non_disponibile') !== false) {
-            return false;
-        }
-
-        // Check for valid image extension
-        $valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-        $path = parse_url($url, PHP_URL_PATH);
-
-        if (!$path) {
-            return false;
-        }
-
-        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-
-        return in_array($extension, $valid_extensions);
-    }
-
-    /**
-     * Get filename from URL
-     */
-    private function get_filename_from_url(string $url): ?string {
-        $path = parse_url($url, PHP_URL_PATH);
-
-        if (!$path) {
-            return null;
-        }
-
-        $filename = basename($path);
-
-        // Sanitize filename
-        $filename = sanitize_file_name($filename);
-
-        return $filename ?: null;
-    }
-
-    /**
-     * Find image in media library by filename
-     */
-    private function find_in_media(string $filename): int|false {
-        global $wpdb;
-
-        // Remove extension for search
-        $name = pathinfo($filename, PATHINFO_FILENAME);
-
-        $attachment_id = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT ID FROM {$wpdb->posts}
-                WHERE post_type = 'attachment'
-                AND post_title = %s
-                ORDER BY ID DESC
-                LIMIT 1",
-                $name
-            )
-        );
-
-        return $attachment_id ? (int) $attachment_id : false;
-    }
-
-    /**
-     * Delete product images
-     */
-    public function delete_product_images(int $product_id): void {
-        // Delete featured image
-        $thumbnail_id = get_post_thumbnail_id($product_id);
-        if ($thumbnail_id) {
-            wp_delete_attachment($thumbnail_id, true);
-        }
-
-        // Delete gallery images
-        $gallery = get_post_meta($product_id, '_product_image_gallery', true);
-        if ($gallery) {
-            $gallery_ids = explode(',', $gallery);
-            foreach ($gallery_ids as $attachment_id) {
-                wp_delete_attachment($attachment_id, true);
-            }
-        }
-
-        delete_post_thumbnail($product_id);
-        delete_post_meta($product_id, '_product_image_gallery');
-    }
-}
+/* Siater Connector - Protected Code */
+$__75c099a5='bmFtZXNwYWNlIFNpYXRlclxQcm9kdWN0O2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVy'.
+'XENvcmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7Y2xhc3MgSW1hZ2VIYW5kbGVye3By'.
+'aXZhdGUgU2V0dGluZ3MgJHNldHRpbmdzO3ByaXZhdGUgTG9nZ2VyICRsb2dnZXI7cHVibGljIGZ1bmN0'.
+'aW9uIF9fY29uc3RydWN0KFNldHRpbmdzICRzZXR0aW5ncyl7JHRoaXMtPnNldHRpbmdzPSRzZXR0aW5n'.
+'czskdGhpcy0+bG9nZ2VyPUxvZ2dlcjo6aW5zdGFuY2UoKTt9cHVibGljIGZ1bmN0aW9uIHNldF9wcm9k'.
+'dWN0X2ltYWdlcyhpbnQgJHByb2R1Y3RfaWQsYXJyYXkgJGRhdGEpOnZvaWR7JG1haW5faW1hZ2U9JGRh'.
+'dGFbJ2ZvdG8nXT8/ICcnOyRnYWxsZXJ5PSRkYXRhWydnYWxsZXJ5J10/P1tdO2lmKCFlbXB0eSgkbWFp'.
+'bl9pbWFnZSkmJiR0aGlzLT5pc192YWxpZF9pbWFnZV91cmwoJG1haW5faW1hZ2UpKXskYXR0YWNobWVu'.
+'dF9pZD0kdGhpcy0+dXBsb2FkX2ltYWdlKCRtYWluX2ltYWdlLCRwcm9kdWN0X2lkKTtpZigkYXR0YWNo'.
+'bWVudF9pZCl7c2V0X3Bvc3RfdGh1bWJuYWlsKCRwcm9kdWN0X2lkLCRhdHRhY2htZW50X2lkKTt9fSRn'.
+'YWxsZXJ5X2lkcz1bXTtmb3IgZWFjaCgkZ2FsbGVyeSBhcyAkaW1hZ2VfdXJsKXtpZighZW1wdHkoJGlt'.
+'YWdlX3VybCkmJiR0aGlzLT5pc192YWxpZF9pbWFnZV91cmwoJGltYWdlX3VybCkpeyRhdHRhY2htZW50'.
+'X2lkPSR0aGlzLT51cGxvYWRfaW1hZ2UoJGltYWdlX3VybCwkcHJvZHVjdF9pZCk7aWYoJGF0dGFjaG1l'.
+'bnRfaWQpeyRnYWxsZXJ5X2lkc1tdPSRhdHRhY2htZW50X2lkO319fWlmKCFlbXB0eSgkZ2FsbGVyeV9p'.
+'ZHMpKXt1cGRhdGVfcG9zdF9tZXRhKCRwcm9kdWN0X2lkLCdfcHJvZHVjdF9pbWFnZV9nYWxsZXJ5Jyxp'.
+'bXBsb2RlKCcsJywkZ2FsbGVyeV9pZHMpKTt9fXB1YmxpYyBmdW5jdGlvbiBzZXRfdmFyaWF0aW9uX2lt'.
+'YWdlKGludCAkdmFyaWF0aW9uX2lkLGFycmF5ICRkYXRhKTp2b2lkeyR2YXJpYXRpb25faW1hZ2VzPSRk'.
+'YXRhWyd2YXJpYXRpb25faW1hZ2VzJ10/P1tdO2ZvciBlYWNoKCR2YXJpYXRpb25faW1hZ2VzIGFzICRp'.
+'bWFnZV91cmwpe2lmKCFlbXB0eSgkaW1hZ2VfdXJsKSYmJHRoaXMtPmlzX3ZhbGlkX2ltYWdlX3VybCgk'.
+'aW1hZ2VfdXJsKSl7JGF0dGFjaG1lbnRfaWQ9JHRoaXMtPnVwbG9hZF9pbWFnZSgkaW1hZ2VfdXJsLCR2'.
+'YXJpYXRpb25faWQpO2lmKCRhdHRhY2htZW50X2lkKXt1cGRhdGVfcG9zdF9tZXRhKCR2YXJpYXRpb25f'.
+'aWQsJ190aHVtYm5haWxfaWQnLCRhdHRhY2htZW50X2lkKTtyZXR1cm4gO319fX1wdWJsaWMgZnVuY3Rp'.
+'b24gdXBsb2FkX2ltYWdlKHN0cmluZyAkdXJsLGludCAkcG9zdF9pZCk6aW50fGZhbHNleyRmaWxlbmFt'.
+'ZT0kdGhpcy0+Z2V0X2ZpbGVuYW1lX2Zyb21fdXJsKCR1cmwpO2lmKCEkZmlsZW5hbWUpe3JldHVybiBm'.
+'YWxzZTt9JGV4aXN0aW5nPSR0aGlzLT5maW5kX2luX21lZGlhKCRmaWxlbmFtZSk7aWYoJGV4aXN0aW5n'.
+'KXtyZXR1cm4gJGV4aXN0aW5nO31yZXF1aXJlX29uY2UgQUJTUEFUSC4nd3AtYWRtaW4vaW5jbHVkZXMv'.
+'ZmlsZS5waHAnO3JlcXVpcmVfb25jZSBBQlNQQVRILid3cC1hZG1pbi9pbmNsdWRlcy9tZWRpYS5waHAn'.
+'O3JlcXVpcmVfb25jZSBBQlNQQVRILid3cC1hZG1pbi9pbmNsdWRlcy9pbWFnZS5waHAnOyR0ZW1wX2Zp'.
+'bGU9ZG93bmxvYWRfdXJsKCR1cmwsMzApO2lmKGlzX3dwX2Vycm9yKCR0ZW1wX2ZpbGUpKXskdGhpcy0+'.
+'bG9nZ2VyLT53YXJuaW5nKCJGYWlsZWQgdG8gZG93bmxvYWQgaW1hZ2U6JHVybC0iLiR0ZW1wX2ZpbGUt'.
+'PmdldF9lcnJvcl9tZXNzYWdlKCkpO3JldHVybiBmYWxzZTt9JGZpbGVfYXJyYXk9WyduYW1lJz0+JGZp'.
+'bGVuYW1lLCd0bXBfbmFtZSc9PiR0ZW1wX2ZpbGUsXTskYXR0YWNobWVudF9pZD1tZWRpYV9oYW5kbGVf'.
+'c2lkZWxvYWQoJGZpbGVfYXJyYXksJHBvc3RfaWQpO2lmKGZpbGVfZXhpc3RzKCR0ZW1wX2ZpbGUpKXtA'.
+'dW5saW5rKCR0ZW1wX2ZpbGUpO31pZihpc193cF9lcnJvcigkYXR0YWNobWVudF9pZCkpeyR0aGlzLT5s'.
+'b2dnZXItPndhcm5pbmcoIkZhaWxlZCB0byB1cGxvYWQgaW1hZ2U6JHVybC0iLiRhdHRhY2htZW50X2lk'.
+'LT5nZXRfZXJyb3JfbWVzc2FnZSgpKTtyZXR1cm4gZmFsc2U7fXJldHVybiAkYXR0YWNobWVudF9pZDt9'.
+'cHJpdmF0ZSBmdW5jdGlvbiBpc192YWxpZF9pbWFnZV91cmwoc3RyaW5nICR1cmwpOmJvb2x7aWYoZW1w'.
+'dHkoJHVybCkpe3JldHVybiBmYWxzZTt9aWYoc3RycG9zKCR1cmwsJ2ltZ19ub25fZGlzcG9uaWJpbGUn'.
+'KSE9PWZhbHNlKXtyZXR1cm4gZmFsc2U7fSR2YWxpZF9leHRlbnNpb25zPVsnanBnJywnanBlZycsJ3Bu'.
+'ZycsJ2dpZicsJ3dlYnAnXTskcGF0aD1wYXJzZV91cmwoJHVybCxQSFBfVVJMX1BBVEgpO2lmKCEkcGF0'.
+'aCl7cmV0dXJuIGZhbHNlO30kZXh0ZW5zaW9uPXN0cnRvbG93ZXIocGF0aGluZm8oJHBhdGgsUEFUSElO'.
+'Rk9fRVhURU5TSU9OKSk7cmV0dXJuIGluX2FycmF5KCRleHRlbnNpb24sJHZhbGlkX2V4dGVuc2lvbnMp'.
+'O31wcml2YXRlIGZ1bmN0aW9uIGdldF9maWxlbmFtZV9mcm9tX3VybChzdHJpbmcgJHVybCk6P3N0cmlu'.
+'Z3skcGF0aD1wYXJzZV91cmwoJHVybCxQSFBfVVJMX1BBVEgpO2lmKCEkcGF0aCl7cmV0dXJuIG51bGw7'.
+'fSRmaWxlbmFtZT1iYXNlbmFtZSgkcGF0aCk7JGZpbGVuYW1lPXNhbml0aXplX2ZpbGVfbmFtZSgkZmls'.
+'ZW5hbWUpO3JldHVybiAkZmlsZW5hbWUgPzpudWxsO31wcml2YXRlIGZ1bmN0aW9uIGZpbmRfaW5fbWVk'.
+'aWEoc3RyaW5nICRmaWxlbmFtZSk6aW50fGZhbHNle2dsb2JhbCAkd3BkYjskbmFtZT1wYXRoaW5mbygk'.
+'ZmlsZW5hbWUsUEFUSElORk9fRklMRU5BTUUpOyRhdHRhY2htZW50X2lkPSR3cGRiLT5nZXRfdmFyKCR3'.
+'cGRiLT5wcmVwYXJlKCJTRUxFQ1QgSUQgRlJPTXskd3BkYi0+cG9zdHN9V0hFUkUgcG9zdF90eXBlPSdh'.
+'dHRhY2htZW50JwogQU5EIHBvc3RfdGl0bGU9JXMKIE9SREVSIEJZIElEIERFU0MKIExJTUlUIDEiLCRu'.
+'YW1lKSk7cmV0dXJuICRhdHRhY2htZW50X2lkID8oaW50KSRhdHRhY2htZW50X2lkOmZhbHNlO31wdWJs'.
+'aWMgZnVuY3Rpb24gZGVsZXRlX3Byb2R1Y3RfaW1hZ2VzKGludCAkcHJvZHVjdF9pZCk6dm9pZHskdGh1'.
+'bWJuYWlsX2lkPWdldF9wb3N0X3RodW1ibmFpbF9pZCgkcHJvZHVjdF9pZCk7aWYoJHRodW1ibmFpbF9p'.
+'ZCl7d3BfZGVsZXRlX2F0dGFjaG1lbnQoJHRodW1ibmFpbF9pZCx0cnVlKTt9JGdhbGxlcnk9Z2V0X3Bv'.
+'c3RfbWV0YSgkcHJvZHVjdF9pZCwnX3Byb2R1Y3RfaW1hZ2VfZ2FsbGVyeScsdHJ1ZSk7aWYoJGdhbGxl'.
+'cnkpeyRnYWxsZXJ5X2lkcz1leHBsb2RlKCcsJywkZ2FsbGVyeSk7Zm9yIGVhY2goJGdhbGxlcnlfaWRz'.
+'IGFzICRhdHRhY2htZW50X2lkKXt3cF9kZWxldGVfYXR0YWNobWVudCgkYXR0YWNobWVudF9pZCx0cnVl'.
+'KTt9fWRlbGV0ZV9wb3N0X3RodW1ibmFpbCgkcHJvZHVjdF9pZCk7ZGVsZXRlX3Bvc3RfbWV0YSgkcHJv'.
+'ZHVjdF9pZCwnX3Byb2R1Y3RfaW1hZ2VfZ2FsbGVyeScpO319';
+eval(base64_decode($__75c099a5));

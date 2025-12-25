@@ -1,303 +1,83 @@
 <?php
-/**
- * Sync Handler
- *
- * Main synchronization orchestrator - coordinates the sync process
- * Uses original wp_siater_feed table for state management
- */
-
-namespace Siater\Sync;
-
-defined('ABSPATH') || exit;
-
-use Siater\Core\Settings;
-use Siater\Utils\Logger;
-use Siater\Product\ProductHandler;
-use Siater\Product\VariationHandler;
-
-class SyncHandler {
-
-    /**
-     * Settings instance
-     */
-    private Settings $settings;
-
-    /**
-     * Logger instance
-     */
-    private Logger $logger;
-
-    /**
-     * Sync state manager
-     */
-    private SyncState $state;
-
-    /**
-     * Feed parser
-     */
-    private FeedParser $feed_parser;
-
-    /**
-     * Product handler
-     */
-    private ProductHandler $product_handler;
-
-    /**
-     * Variation handler
-     */
-    private VariationHandler $variation_handler;
-
-    /**
-     * Max execution time (seconds)
-     */
-    private int $max_time = 540; // 9 minutes
-
-    /**
-     * Start time
-     */
-    private float $start_time;
-
-    /**
-     * Sync interval in hours
-     */
-    private int $sync_interval = 3;
-
-    /**
-     * Constructor
-     */
-    public function __construct(Settings $settings) {
-        $this->settings = $settings;
-        $this->logger = Logger::instance();
-        $this->state = new SyncState();
-        $this->feed_parser = new FeedParser($settings);
-        $this->product_handler = new ProductHandler($settings);
-        $this->variation_handler = new VariationHandler($settings);
-    }
-
-    /**
-     * Run synchronization
-     */
-    public function run(): void {
-        $this->start_time = microtime(true);
-
-        // Configure PHP
-        $this->configure_environment();
-
-        // Enable debug if setting is on
-        if ($this->settings->get('debug_enabled', 0)) {
-            $this->logger->enable();
-        }
-
-        // Acquire lock
-        if (!$this->state->acquire_lock()) {
-            $this->output('Sync already in progress');
-            return;
-        }
-
-        $this->logger->start_sync();
-        $this->output('Sync started');
-
-        try {
-            $this->process_sync();
-            $this->logger->end_sync(true);
-        } catch (\Exception $e) {
-            $this->logger->error('Sync failed: ' . $e->getMessage());
-            $this->logger->end_sync(false);
-            $this->output('Error: ' . $e->getMessage());
-        } finally {
-            $this->state->release_lock();
-        }
-    }
-
-    /**
-     * Process synchronization
-     */
-    private function process_sync(): void {
-        $offset = $this->state->get_offset();
-        $hours_since_last = $this->state->hours_since_last_sync();
-
-        // Check if we should start a new sync or continue
-        if ($offset === 0 && $hours_since_last < $this->sync_interval) {
-            $remaining = round($this->sync_interval - $hours_since_last, 1);
-            $this->output("Last sync was " . round($hours_since_last, 1) . " hours ago. Next sync in {$remaining} hours.");
-            return;
-        }
-
-        $this->logger->info("Starting sync from offset: $offset");
-        $this->output("Processing from offset: $offset");
-
-        // Fetch products from feed
-        $products = $this->feed_parser->fetch($offset);
-        $count = count($products);
-
-        $this->logger->info("Fetched $count products");
-        $this->output("Found $count products");
-
-        if (empty($products)) {
-            // No more products - sync complete
-            $this->complete_sync();
-            return;
-        }
-
-        // Track parent products for variation syncing
-        $parent_products = [];
-
-        // Process products
-        $processed = 0;
-        $has_variations = $this->settings->get('tagliecolori', 0);
-
-        foreach ($products as $product) {
-            // Check time limit
-            if ($this->is_time_exceeded()) {
-                $this->logger->warning('Time limit reached, will continue on next run');
-                break;
-            }
-
-            // Check if we should skip products without variation images
-            if ($has_variations && $this->settings->get('solo_prodotti_con_foto_varianti', 0)) {
-                if (!$product['has_variation_images']) {
-                    $this->logger->debug("Skipping product {$product['cod']} - no variation images");
-                    $processed++;
-                    continue;
-                }
-            }
-
-            if ($has_variations && $product['is_variation']) {
-                // This is a variation row
-                $parent_sku = $product['gruppov'] ?? $product['cod'];
-
-                // Create or get parent product
-                if (!isset($parent_products[$parent_sku])) {
-                    $parent_id = $this->product_handler->sync_variable($product);
-                    if ($parent_id) {
-                        $parent_products[$parent_sku] = $parent_id;
-                    }
-                }
-
-                // Create/update variation
-                if (isset($parent_products[$parent_sku])) {
-                    $this->variation_handler->sync($parent_products[$parent_sku], $product);
-                }
-            } else {
-                // Simple product
-                $this->product_handler->sync_simple($product);
-            }
-
-            $processed++;
-
-            // Memory cleanup every 50 products
-            if ($processed % 50 === 0) {
-                $this->memory_cleanup();
-                $this->logger->info("Processed $processed products");
-
-                // Update lock timestamp (heartbeat)
-                $this->state->update_lock_timestamp();
-            }
-        }
-
-        // Sync parent stock for all variable products
-        foreach ($parent_products as $parent_id) {
-            $this->variation_handler->sync_parent_stock($parent_id);
-        }
-
-        // Update offset
-        $new_offset = $offset + $this->settings->get('num_record', 300);
-
-        // Check if this was the last batch
-        $batch_size = $this->settings->get('num_record', 300);
-        if ($count < $batch_size) {
-            // All products processed
-            $this->complete_sync();
-        } else {
-            // More products to process
-            $this->state->set_offset($new_offset);
-            $this->output("Batch complete. Processed $processed products. Next offset: $new_offset");
-        }
-    }
-
-    /**
-     * Complete sync - reset state
-     */
-    private function complete_sync(): void {
-        $this->state->mark_completed();
-        $this->logger->success('Sync completed successfully');
-        $this->output('Sync completed!');
-    }
-
-    /**
-     * Configure PHP environment
-     */
-    private function configure_environment(): void {
-        // Set time limit
-        @set_time_limit(600);
-
-        // Set memory limit
-        $current = ini_get('memory_limit');
-        $current_bytes = wp_convert_hr_to_bytes($current);
-        $target_bytes = 256 * 1024 * 1024;
-
-        if ($current_bytes < $target_bytes) {
-            @ini_set('memory_limit', '256M');
-        }
-    }
-
-    /**
-     * Check if time limit exceeded
-     */
-    private function is_time_exceeded(): bool {
-        $elapsed = microtime(true) - $this->start_time;
-        return $elapsed >= $this->max_time;
-    }
-
-    /**
-     * Memory cleanup
-     */
-    private function memory_cleanup(): void {
-        global $wpdb;
-
-        // Clear WordPress object cache
-        wp_cache_flush();
-
-        // Clear WPDB query log
-        $wpdb->queries = [];
-
-        // Force garbage collection if available
-        if (function_exists('gc_collect_cycles')) {
-            gc_collect_cycles();
-        }
-    }
-
-    /**
-     * Output message
-     */
-    private function output(string $message): void {
-        if ($this->settings->get('verbose_output', 0)) {
-            echo $message . "\n";
-            flush();
-        }
-    }
-
-    /**
-     * Get sync status
-     */
-    public function get_status(): array {
-        $state = $this->state->get();
-
-        return [
-            'is_running' => $this->state->is_locked(),
-            'is_syncing' => $this->state->is_syncing(),
-            'current_offset' => $this->state->get_offset(),
-            'last_sync' => $this->state->get_last_sync(),
-            'last_sync_formatted' => $this->state->get_last_sync() ?
-                date('Y-m-d H:i:s', $this->state->get_last_sync()) : 'Mai',
-            'hours_since_last' => round($this->state->hours_since_last_sync(), 1),
-        ];
-    }
-
-    /**
-     * Force reset sync state
-     */
-    public function reset(): void {
-        $this->state->reset();
-    }
-}
+/* Siater Connector - Protected Code */
+$__b331824a='bmFtZXNwYWNlIFNpYXRlclxTeW5jO2RlZmluZWQoJ0FCU1BBVEgnKXx8ZXhpdDt1c2UgU2lhdGVyXENv'.
+'cmVcU2V0dGluZ3M7dXNlIFNpYXRlclxVdGlsc1xMb2dnZXI7dXNlIFNpYXRlclxQcm9kdWN0XFByb2R1'.
+'Y3RIYW5kbGVyO3VzZSBTaWF0ZXJcUHJvZHVjdFxWYXJpYXRpb25IYW5kbGVyO2NsYXNzIFN5bmNIYW5k'.
+'bGVye3ByaXZhdGUgU2V0dGluZ3MgJHNldHRpbmdzO3ByaXZhdGUgTG9nZ2VyICRsb2dnZXI7cHJpdmF0'.
+'ZSBTeW5jU3RhdGUgJHN0YXRlO3ByaXZhdGUgRmVlZFBhcnNlciAkZmVlZF9wYXJzZXI7cHJpdmF0ZSBQ'.
+'cm9kdWN0SGFuZGxlciAkcHJvZHVjdF9oYW5kbGVyO3ByaXZhdGUgVmFyaWF0aW9uSGFuZGxlciAkdmFy'.
+'aWF0aW9uX2hhbmRsZXI7cHJpdmF0ZSBpbnQgJG1heF90aW1lPTU0MDtwcml2YXRlIGZsb2F0ICRzdGFy'.
+'dF90aW1lO3ByaXZhdGUgaW50ICRzeW5jX2ludGVydmFsPTM7cHVibGljIGZ1bmN0aW9uIF9fY29uc3Ry'.
+'dWN0KFNldHRpbmdzICRzZXR0aW5ncyl7JHRoaXMtPnNldHRpbmdzPSRzZXR0aW5nczskdGhpcy0+bG9n'.
+'Z2VyPUxvZ2dlcjo6aW5zdGFuY2UoKTskdGhpcy0+c3RhdGU9bmV3IFN5bmNTdGF0ZSgpOyR0aGlzLT5m'.
+'ZWVkX3BhcnNlcj1uZXcgRmVlZFBhcnNlcigkc2V0dGluZ3MpOyR0aGlzLT5wcm9kdWN0X2hhbmRsZXI9'.
+'bmV3IFByb2R1Y3RIYW5kbGVyKCRzZXR0aW5ncyk7JHRoaXMtPnZhcmlhdGlvbl9oYW5kbGVyPW5ldyBW'.
+'YXJpYXRpb25IYW5kbGVyKCRzZXR0aW5ncyk7fXB1YmxpYyBmdW5jdGlvbiBydW4oKTp2b2lkeyR0aGlz'.
+'LT5zdGFydF90aW1lPW1pY3JvdGltZSh0cnVlKTskdGhpcy0+Y29uZmlndXJlX2Vudmlyb25tZW50KCk7'.
+'aWYoJHRoaXMtPnNldHRpbmdzLT5nZXQoJ2RlYnVnX2VuYWJsZWQnLDApKXskdGhpcy0+bG9nZ2VyLT5l'.
+'bmFibGUoKTt9aWYoISR0aGlzLT5zdGF0ZS0+YWNxdWlyZV9sb2NrKCkpeyR0aGlzLT5vdXRwdXQoJ1N5'.
+'bmMgYWxyZWFkeSBpbiBwcm9ncmVzcycpO3JldHVybiA7fSR0aGlzLT5sb2dnZXItPnN0YXJ0X3N5bmMo'.
+'KTskdGhpcy0+b3V0cHV0KCdTeW5jIHN0YXJ0ZWQnKTt0cnkgeyR0aGlzLT5wcm9jZXNzX3N5bmMoKTsk'.
+'dGhpcy0+bG9nZ2VyLT5lbmRfc3luYyh0cnVlKTt9Y2F0Y2goXEV4Y2VwdGlvbiAkZSl7JHRoaXMtPmxv'.
+'Z2dlci0+ZXJyb3IoJ1N5bmMgZmFpbGVkOicuJGUtPmdldE1lc3NhZ2UoKSk7JHRoaXMtPmxvZ2dlci0+'.
+'ZW5kX3N5bmMoZmFsc2UpOyR0aGlzLT5vdXRwdXQoJ0Vycm9yOicuJGUtPmdldE1lc3NhZ2UoKSk7fWZp'.
+'bmFsbHkgeyR0aGlzLT5zdGF0ZS0+cmVsZWFzZV9sb2NrKCk7fX1wcml2YXRlIGZ1bmN0aW9uIHByb2Nl'.
+'c3Nfc3luYygpOnZvaWR7JG9mZnNldD0kdGhpcy0+c3RhdGUtPmdldF9vZmZzZXQoKTskaG91cnNfc2lu'.
+'Y2VfbGFzdD0kdGhpcy0+c3RhdGUtPmhvdXJzX3NpbmNlX2xhc3Rfc3luYygpO2lmKCRvZmZzZXQ9PT0w'.
+'JiYkaG91cnNfc2luY2VfbGFzdDwkdGhpcy0+c3luY19pbnRlcnZhbCl7JHJlbWFpbmluZz1yb3VuZCgk'.
+'dGhpcy0+c3luY19pbnRlcnZhbC0kaG91cnNfc2luY2VfbGFzdCwxKTskdGhpcy0+b3V0cHV0KCJMYXN0'.
+'IHN5bmMgd2FzICIucm91bmQoJGhvdXJzX3NpbmNlX2xhc3QsMSkuIiBob3VycyBhZ28uTmV4dCBzeW5j'.
+'IGlueyRyZW1haW5pbmd9aG91cnMuIik7cmV0dXJuIDt9JHRoaXMtPmxvZ2dlci0+aW5mbygiU3RhcnRp'.
+'bmcgc3luYyBmcm9tIG9mZnNldDokb2Zmc2V0Iik7JHRoaXMtPm91dHB1dCgiUHJvY2Vzc2luZyBmcm9t'.
+'IG9mZnNldDokb2Zmc2V0Iik7JHByb2R1Y3RzPSR0aGlzLT5mZWVkX3BhcnNlci0+ZmV0Y2goJG9mZnNl'.
+'dCk7JGNvdW50PWNvdW50KCRwcm9kdWN0cyk7JHRoaXMtPmxvZ2dlci0+aW5mbygiRmV0Y2hlZCAkY291'.
+'bnQgcHJvZHVjdHMiKTskdGhpcy0+b3V0cHV0KCJGb3VuZCAkY291bnQgcHJvZHVjdHMiKTtpZihlbXB0'.
+'eSgkcHJvZHVjdHMpKXskdGhpcy0+Y29tcGxldGVfc3luYygpO3JldHVybiA7fSRwYXJlbnRfcHJvZHVj'.
+'dHM9W107JHByb2Nlc3NlZD0wOyRoYXNfdmFyaWF0aW9ucz0kdGhpcy0+c2V0dGluZ3MtPmdldCgndGFn'.
+'bGllY29sb3JpJywwKTtmb3IgZWFjaCgkcHJvZHVjdHMgYXMgJHByb2R1Y3Qpe2lmKCR0aGlzLT5pc190'.
+'aW1lX2V4Y2VlZGVkKCkpeyR0aGlzLT5sb2dnZXItPndhcm5pbmcoJ1RpbWUgbGltaXQgcmVhY2hlZCx3'.
+'aWxsIGNvbnRpbnVlIG9uIG5leHQgcnVuJyk7YnJlYWs7fWlmKCRoYXNfdmFyaWF0aW9ucyYmJHRoaXMt'.
+'PnNldHRpbmdzLT5nZXQoJ3NvbG9fcHJvZG90dGlfY29uX2ZvdG9fdmFyaWFudGknLDApKXtpZighJHBy'.
+'b2R1Y3RbJ2hhc192YXJpYXRpb25faW1hZ2VzJ10peyRza3U9JHByb2R1Y3RbJ3NrdSddPz8gJHByb2R1'.
+'Y3RbJ2lkJ10/PyAnJzskdGhpcy0+bG9nZ2VyLT5kZWJ1ZygiU2tpcHBpbmcgcHJvZHVjdCAkc2t1LW5v'.
+'IHZhcmlhdGlvbiBpbWFnZXMiKTskcHJvY2Vzc2VkKys7Y29udGludWU7fX1pZigkaGFzX3ZhcmlhdGlv'.
+'bnMmJiRwcm9kdWN0Wydpc192YXJpYXRpb24nXSl7JHBhcmVudF9za3U9JHByb2R1Y3RbJ3NrdSddPz8g'.
+'JHByb2R1Y3RbJ2NvZCddPz8gJyc7aWYoZW1wdHkoJHBhcmVudF9za3UpKXskdGhpcy0+bG9nZ2VyLT53'.
+'YXJuaW5nKCdTa2lwcGluZyB2YXJpYXRpb24tbm8gcGFyZW50IFNLVScpOyRwcm9jZXNzZWQrKztjb250'.
+'aW51ZTt9aWYoIWlzc2V0KCRwYXJlbnRfcHJvZHVjdHNbJHBhcmVudF9za3VdKSl7JHBhcmVudF9pZD0k'.
+'dGhpcy0+cHJvZHVjdF9oYW5kbGVyLT5zeW5jX3ZhcmlhYmxlKCRwcm9kdWN0KTtpZigkcGFyZW50X2lk'.
+'KXskcGFyZW50X3Byb2R1Y3RzWyRwYXJlbnRfc2t1XT0kcGFyZW50X2lkO319aWYoaXNzZXQoJHBhcmVu'.
+'dF9wcm9kdWN0c1skcGFyZW50X3NrdV0pKXskdGhpcy0+dmFyaWF0aW9uX2hhbmRsZXItPnN5bmMoJHBh'.
+'cmVudF9wcm9kdWN0c1skcGFyZW50X3NrdV0sJHByb2R1Y3QpO319ZWxzZSB7JHRoaXMtPnByb2R1Y3Rf'.
+'aGFuZGxlci0+c3luY19zaW1wbGUoJHByb2R1Y3QpO30kcHJvY2Vzc2VkKys7aWYoJHByb2Nlc3NlZCAl'.
+'IDUwPT09MCl7JHRoaXMtPm1lbW9yeV9jbGVhbnVwKCk7JHRoaXMtPmxvZ2dlci0+aW5mbygiUHJvY2Vz'.
+'c2VkICRwcm9jZXNzZWQgcHJvZHVjdHMiKTskdGhpcy0+c3RhdGUtPnVwZGF0ZV9sb2NrX3RpbWVzdGFt'.
+'cCgpO319Zm9yIGVhY2goJHBhcmVudF9wcm9kdWN0cyBhcyAkcGFyZW50X3NrdT0+JHBhcmVudF9pZCl7'.
+'JHRoaXMtPnZhcmlhdGlvbl9oYW5kbGVyLT5zeW5jX3BhcmVudF9zdG9jaygkcGFyZW50X2lkKTt9JG5l'.
+'dyBfb2Zmc2V0PSRvZmZzZXQrJHRoaXMtPnNldHRpbmdzLT5nZXQoJ251bV9yZWNvcmQnLDMwMCk7JGJh'.
+'dGNoX3NpemU9JHRoaXMtPnNldHRpbmdzLT5nZXQoJ251bV9yZWNvcmQnLDMwMCk7aWYoJGNvdW50PCRi'.
+'YXRjaF9zaXplKXskdGhpcy0+Y29tcGxldGVfc3luYygpO31lbHNlIHskdGhpcy0+c3RhdGUtPnNldF9v'.
+'ZmZzZXQoJG5ldyBfb2Zmc2V0KTskdGhpcy0+b3V0cHV0KCJCYXRjaCBjb21wbGV0ZS5Qcm9jZXNzZWQg'.
+'JHByb2Nlc3NlZCBwcm9kdWN0cy5OZXh0IG9mZnNldDokbmV3IF9vZmZzZXQiKTt9fXByaXZhdGUgZnVu'.
+'Y3Rpb24gY29tcGxldGVfc3luYygpOnZvaWR7JHRoaXMtPnN0YXRlLT5tYXJrX2NvbXBsZXRlZCgpOyR0'.
+'aGlzLT5sb2dnZXItPnN1Y2Nlc3MoJ1N5bmMgY29tcGxldGVkIHN1Y2Nlc3NmdWxseScpOyR0aGlzLT5v'.
+'dXRwdXQoJ1N5bmMgY29tcGxldGVkIScpO31wcml2YXRlIGZ1bmN0aW9uIGNvbmZpZ3VyZV9lbnZpcm9u'.
+'bWVudCgpOnZvaWR7QHNldF90aW1lX2xpbWl0KDYwMCk7JGN1cnJlbnQ9aW5pX2dldCgnbWVtb3J5X2xp'.
+'bWl0Jyk7JGN1cnJlbnRfYnl0ZXM9d3BfY29udmVydF9ocl90b19ieXRlcygkY3VycmVudCk7JHRhcmdl'.
+'dF9ieXRlcz0yNTYqMTAyNCoxMDI0O2lmKCRjdXJyZW50X2J5dGVzPCR0YXJnZXRfYnl0ZXMpe0Bpbmlf'.
+'c2V0KCdtZW1vcnlfbGltaXQnLCcyNTZNJyk7fX1wcml2YXRlIGZ1bmN0aW9uIGlzX3RpbWVfZXhjZWVk'.
+'ZWQoKTpib29seyRlbGFwc2VkPW1pY3JvdGltZSh0cnVlKS0kdGhpcy0+c3RhcnRfdGltZTtyZXR1cm4g'.
+'JGVsYXBzZWQ+PSR0aGlzLT5tYXhfdGltZTt9cHJpdmF0ZSBmdW5jdGlvbiBtZW1vcnlfY2xlYW51cCgp'.
+'OnZvaWR7Z2xvYmFsICR3cGRiO3dwX2NhY2hlX2ZsdXNoKCk7JHdwZGItPnF1ZXJpZXM9W107aWYoZnVu'.
+'Y3Rpb24gX2V4aXN0cygnZ2NfY29sbGVjdF9jeWNsZXMnKSl7Z2NfY29sbGVjdF9jeWNsZXMoKTt9fXBy'.
+'aXZhdGUgZnVuY3Rpb24gb3V0cHV0KHN0cmluZyAkbWVzc2FnZSk6dm9pZHtpZigkdGhpcy0+c2V0dGlu'.
+'Z3MtPmdldCgndmVyYm9zZV9vdXRwdXQnLDApKXtlY2hvICRtZXNzYWdlLiJcbiI7Zmx1c2goKTt9fXB1'.
+'YmxpYyBmdW5jdGlvbiBnZXRfc3RhdHVzKCk6YXJyYXl7JHN0YXRlPSR0aGlzLT5zdGF0ZS0+Z2V0KCk7'.
+'cmV0dXJuIFsnaXNfcnVubmluZyc9PiR0aGlzLT5zdGF0ZS0+aXNfbG9ja2VkKCksJ2lzX3N5bmNpbmcn'.
+'PT4kdGhpcy0+c3RhdGUtPmlzX3N5bmNpbmcoKSwnY3VycmVudF9vZmZzZXQnPT4kdGhpcy0+c3RhdGUt'.
+'PmdldF9vZmZzZXQoKSwnbGFzdF9zeW5jJz0+JHRoaXMtPnN0YXRlLT5nZXRfbGFzdF9zeW5jKCksJ2xh'.
+'c3Rfc3luY19mb3JtYXR0ZWQnPT4kdGhpcy0+c3RhdGUtPmdldF9sYXN0X3N5bmMoKT8KZGF0ZSgnWS1t'.
+'LWQgSDppOnMnLCR0aGlzLT5zdGF0ZS0+Z2V0X2xhc3Rfc3luYygpKTonTWFpJywnaG91cnNfc2luY2Vf'.
+'bGFzdCc9PnJvdW5kKCR0aGlzLT5zdGF0ZS0+aG91cnNfc2luY2VfbGFzdF9zeW5jKCksMSksXTt9cHVi'.
+'bGljIGZ1bmN0aW9uIHJlc2V0KCk6dm9pZHskdGhpcy0+c3RhdGUtPnJlc2V0KCk7fX0=';
+eval(base64_decode($__b331824a));

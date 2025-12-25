@@ -25,8 +25,8 @@ class AdminHandler {
      */
     public function add_menu(): void {
         add_menu_page(
-            __('Siater 2026', 'siater'),
-            __('Siater 2026', 'siater'),
+            __('SIAter Sync', 'siater'),
+            __('SIAter Sync', 'siater'),
             'manage_woocommerce',
             'siater',
             [$this, 'render_settings_page'],
@@ -248,7 +248,7 @@ class AdminHandler {
         settings_errors('siater');
         ?>
         <div class="wrap siater-admin">
-            <h1><?php esc_html_e('Siater Connector 2026', 'siater'); ?></h1>
+            <h1><?php esc_html_e('Siater Connector', 'siater'); ?></h1>
 
             <?php if (!$license->is_valid()): ?>
                 <?php $this->render_license_form(); ?>
@@ -258,46 +258,62 @@ class AdminHandler {
                 <form method="post" action="">
                     <?php wp_nonce_field('siater_settings', 'siater_nonce'); ?>
 
-                    <h2><?php esc_html_e('Configurazione SIA', 'siater'); ?></h2>
-                    <table class="form-table">
-                        <tr>
-                            <th scope="row">
-                                <label for="url"><?php esc_html_e('URL SIA', 'siater'); ?></label>
-                            </th>
-                            <td>
-                                <input type="text" id="url" name="url" class="regular-text"
-                                       value="<?php echo esc_attr($settings->get('url')); ?>"
-                                       placeholder="esempio.sicilwareinformatica.it">
-                                <p class="description"><?php esc_html_e('Dominio SIA senza https:// o www', 'siater'); ?></p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="listino"><?php esc_html_e('Listino Prezzi', 'siater'); ?></label>
-                            </th>
-                            <td>
-                                <input type="number" id="listino" name="listino" class="small-text"
-                                       value="<?php echo esc_attr($settings->get('listino', 1)); ?>" min="1">
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="num_record"><?php esc_html_e('Record per Batch', 'siater'); ?></label>
-                            </th>
-                            <td>
-                                <select id="num_record" name="num_record">
-                                    <?php foreach ([10, 20, 30, 50, 100, 200, 300] as $num): ?>
-                                        <option value="<?php echo $num; ?>" <?php selected($settings->get('num_record'), $num); ?>>
-                                            <?php echo $num; ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                    </table>
+                    <!-- SIA Configuration -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-admin-generic"></span>
+                            <?php esc_html_e('Configurazione SIA', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row">
+                                        <label for="url"><?php esc_html_e('URL SIA', 'siater'); ?></label>
+                                    </th>
+                                    <td>
+                                        <input type="text" id="url" name="url" class="regular-text"
+                                               value="<?php echo esc_attr($settings->get('url')); ?>"
+                                               placeholder="esempio.sicilwareinformatica.it">
+                                        <p class="description"><?php esc_html_e('Dominio SIA senza https:// o www', 'siater'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">
+                                        <label for="listino"><?php esc_html_e('Listino Prezzi', 'siater'); ?></label>
+                                    </th>
+                                    <td>
+                                        <input type="number" id="listino" name="listino" class="small-text"
+                                               value="<?php echo esc_attr($settings->get('listino', 1)); ?>" min="1">
+                                        <p class="description"><?php esc_html_e('ID del listino prezzi da utilizzare', 'siater'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">
+                                        <label for="num_record"><?php esc_html_e('Prodotti per Batch', 'siater'); ?></label>
+                                    </th>
+                                    <td>
+                                        <select id="num_record" name="num_record">
+                                            <?php foreach ([10, 20, 30, 50, 100, 200, 300] as $num): ?>
+                                                <option value="<?php echo $num; ?>" <?php selected($settings->get('num_record'), $num); ?>>
+                                                    <?php echo $num; ?> <?php esc_html_e('prodotti', 'siater'); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <p class="description"><?php esc_html_e('Numero di prodotti da sincronizzare per ogni ciclo', 'siater'); ?></p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Opzioni Prodotti', 'siater'); ?></h2>
-                    <table class="form-table">
+                    <!-- Product Options -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-products"></span>
+                            <?php esc_html_e('Opzioni Prodotti', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
                         <tr>
                             <th scope="row"><?php esc_html_e('Taglie e Colori', 'siater'); ?></th>
                             <td>
@@ -385,10 +401,18 @@ class AdminHandler {
                                 </select>
                             </td>
                         </tr>
-                    </table>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Opzioni Categorie e Brand', 'siater'); ?></h2>
-                    <table class="form-table">
+                    <!-- Categories & Brand -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-category"></span>
+                            <?php esc_html_e('Categorie e Brand', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
                         <tr>
                             <th scope="row"><?php esc_html_e('Sincronizza Categorie', 'siater'); ?></th>
                             <td>
@@ -416,10 +440,18 @@ class AdminHandler {
                                 <p class="description"><?php esc_html_e('Es: "Nike / Uomo" diventa "Nike"', 'siater'); ?></p>
                             </td>
                         </tr>
-                    </table>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Opzioni Immagini', 'siater'); ?></h2>
-                    <table class="form-table">
+                    <!-- Images -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-format-image"></span>
+                            <?php esc_html_e('Immagini', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
                         <tr>
                             <th scope="row"><?php esc_html_e('Aggiorna Immagini', 'siater'); ?></th>
                             <td>
@@ -459,27 +491,44 @@ class AdminHandler {
                                 </select>
                             </td>
                         </tr>
-                    </table>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Esportazione Ordini', 'siater'); ?></h2>
-                    <table class="form-table">
-                        <tr>
-                            <th scope="row"><?php esc_html_e('Esporta Ordini', 'siater'); ?></th>
-                            <td>
-                                <select name="esporta_ordini">
-                                    <option value="0" <?php selected($settings->get('esporta_ordini'), 0); ?>>
-                                        <?php esc_html_e('No', 'siater'); ?>
-                                    </option>
-                                    <option value="1" <?php selected($settings->get('esporta_ordini'), 1); ?>>
-                                        <?php esc_html_e('Si', 'siater'); ?>
-                                    </option>
-                                </select>
-                            </td>
-                        </tr>
-                    </table>
+                    <!-- Order Export -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-clipboard"></span>
+                            <?php esc_html_e('Esportazione Ordini', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row"><?php esc_html_e('Esporta Ordini', 'siater'); ?></th>
+                                    <td>
+                                        <select name="esporta_ordini">
+                                            <option value="0" <?php selected($settings->get('esporta_ordini'), 0); ?>>
+                                                <?php esc_html_e('Disabilitato', 'siater'); ?>
+                                            </option>
+                                            <option value="1" <?php selected($settings->get('esporta_ordini'), 1); ?>>
+                                                <?php esc_html_e('Abilitato - Esporta in CSV', 'siater'); ?>
+                                            </option>
+                                        </select>
+                                        <p class="description"><?php esc_html_e('Esporta gli ordini in formato CSV per il gestionale SIA', 'siater'); ?></p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Opzioni Avanzate', 'siater'); ?></h2>
-                    <table class="form-table">
+                    <!-- Advanced Options -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-admin-tools"></span>
+                            <?php esc_html_e('Opzioni Avanzate', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
                         <tr>
                             <th scope="row"><?php esc_html_e('Usa SSL', 'siater'); ?></th>
                             <td>
@@ -519,80 +568,93 @@ class AdminHandler {
                                 </select>
                             </td>
                         </tr>
-                    </table>
+                            </table>
+                        </div>
+                    </div>
 
-                    <h2><?php esc_html_e('Pianificazione Cron', 'siater'); ?></h2>
-                    <table class="form-table">
-                        <tr>
-                            <th scope="row"><?php esc_html_e('Modalita Cron', 'siater'); ?></th>
-                            <td>
-                                <select name="cron_mode" id="cron_mode">
-                                    <option value="wordpress" <?php selected($settings->get('cron_mode', 'wordpress'), 'wordpress'); ?>>
-                                        <?php esc_html_e('WordPress Cron (Automatico)', 'siater'); ?>
-                                    </option>
-                                    <option value="manual" <?php selected($settings->get('cron_mode', 'wordpress'), 'manual'); ?>>
-                                        <?php esc_html_e('Cron Esterno (Manuale)', 'siater'); ?>
-                                    </option>
-                                </select>
-                                <p class="description">
-                                    <?php esc_html_e('WordPress Cron: sincronizzazione automatica. Cron Esterno: usa cron job del server.', 'siater'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr class="cron-interval-row">
-                            <th scope="row"><?php esc_html_e('Intervallo Sync Prodotti', 'siater'); ?></th>
-                            <td>
-                                <select name="sync_interval">
-                                    <?php foreach (\Siater\Core\Settings::SYNC_INTERVALS as $seconds => $label): ?>
-                                        <option value="<?php echo $seconds; ?>" <?php selected($settings->get('sync_interval', 900), $seconds); ?>>
-                                            <?php echo esc_html($label); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                        <tr class="cron-interval-row">
-                            <th scope="row"><?php esc_html_e('Intervallo Export Ordini', 'siater'); ?></th>
-                            <td>
-                                <select name="export_interval">
-                                    <?php foreach (\Siater\Core\Settings::EXPORT_INTERVALS as $seconds => $label): ?>
-                                        <option value="<?php echo $seconds; ?>" <?php selected($settings->get('export_interval', 1800), $seconds); ?>>
-                                            <?php echo esc_html($label); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                        <tr class="cron-interval-row">
-                            <th scope="row"><?php esc_html_e('Intervallo Pulizia Prodotti', 'siater'); ?></th>
-                            <td>
-                                <select name="cleanup_interval">
-                                    <?php foreach (\Siater\Core\Settings::CLEANUP_INTERVALS as $seconds => $label): ?>
-                                        <option value="<?php echo $seconds; ?>" <?php selected($settings->get('cleanup_interval', 86400), $seconds); ?>>
-                                            <?php echo esc_html($label); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                    </table>
+                    <!-- Cron Scheduling -->
+                    <div class="siater-section">
+                        <h2 class="siater-section-header">
+                            <span class="dashicons dashicons-clock"></span>
+                            <?php esc_html_e('Pianificazione Cron', 'siater'); ?>
+                        </h2>
+                        <div class="siater-section-content">
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row"><?php esc_html_e('Modalita Cron', 'siater'); ?></th>
+                                    <td>
+                                        <select name="cron_mode" id="cron_mode">
+                                            <option value="wordpress" <?php selected($settings->get('cron_mode', 'wordpress'), 'wordpress'); ?>>
+                                                <?php esc_html_e('WordPress Cron (Automatico)', 'siater'); ?>
+                                            </option>
+                                            <option value="manual" <?php selected($settings->get('cron_mode', 'wordpress'), 'manual'); ?>>
+                                                <?php esc_html_e('Cron Esterno (Manuale)', 'siater'); ?>
+                                            </option>
+                                        </select>
+                                        <p class="description">
+                                            <?php esc_html_e('WordPress Cron: sincronizzazione automatica. Cron Esterno: usa cron job del server.', 'siater'); ?>
+                                        </p>
+                                    </td>
+                                </tr>
+                                <tr class="cron-interval-row">
+                                    <th scope="row"><?php esc_html_e('Intervallo Sync Prodotti', 'siater'); ?></th>
+                                    <td>
+                                        <select name="sync_interval">
+                                            <?php foreach (\Siater\Core\Settings::SYNC_INTERVALS as $seconds => $label): ?>
+                                                <option value="<?php echo esc_attr($seconds); ?>" <?php selected((int)$settings->get('sync_interval', 900), $seconds); ?>>
+                                                    <?php echo esc_html($label); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                </tr>
+                                <tr class="cron-interval-row">
+                                    <th scope="row"><?php esc_html_e('Intervallo Export Ordini', 'siater'); ?></th>
+                                    <td>
+                                        <select name="export_interval">
+                                            <?php foreach (\Siater\Core\Settings::EXPORT_INTERVALS as $seconds => $label): ?>
+                                                <option value="<?php echo esc_attr($seconds); ?>" <?php selected((int)$settings->get('export_interval', 1800), $seconds); ?>>
+                                                    <?php echo esc_html($label); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                </tr>
+                                <tr class="cron-interval-row">
+                                    <th scope="row"><?php esc_html_e('Intervallo Pulizia Prodotti', 'siater'); ?></th>
+                                    <td>
+                                        <select name="cleanup_interval">
+                                            <?php foreach (\Siater\Core\Settings::CLEANUP_INTERVALS as $seconds => $label): ?>
+                                                <option value="<?php echo esc_attr($seconds); ?>" <?php selected((int)$settings->get('cleanup_interval', 86400), $seconds); ?>>
+                                                    <?php echo esc_html($label); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                </tr>
+                            </table>
 
-                    <script>
-                    jQuery(document).ready(function($) {
-                        function toggleCronIntervals() {
-                            var mode = $('#cron_mode').val();
-                            if (mode === 'wordpress') {
-                                $('.cron-interval-row').show();
-                            } else {
-                                $('.cron-interval-row').hide();
-                            }
-                        }
-                        toggleCronIntervals();
-                        $('#cron_mode').on('change', toggleCronIntervals);
-                    });
-                    </script>
+                            <script>
+                            jQuery(document).ready(function($) {
+                                function toggleCronIntervals() {
+                                    var mode = $('#cron_mode').val();
+                                    if (mode === 'wordpress') {
+                                        $('.cron-interval-row').show();
+                                    } else {
+                                        $('.cron-interval-row').hide();
+                                    }
+                                }
+                                toggleCronIntervals();
+                                $('#cron_mode').on('change', toggleCronIntervals);
+                            });
+                            </script>
 
-                    <?php submit_button(__('Salva Impostazioni', 'siater')); ?>
+                            <div class="siater-submit">
+                                <?php submit_button(__('Salva Impostazioni', 'siater'), 'primary', 'submit', false); ?>
+                            </div>
+                        </div>
+                    </div>
+
                 </form>
             <?php endif; ?>
         </div>
@@ -604,33 +666,33 @@ class AdminHandler {
      */
     private function render_license_form(): void {
         ?>
-        <div class="card">
+        <div class="siater-license-card">
             <h2><?php esc_html_e('Attivazione Licenza', 'siater'); ?></h2>
-            <p><?php esc_html_e('Inserisci i dati della licenza per attivare il plugin.', 'siater'); ?></p>
+            <p><?php esc_html_e('Inserisci i dati della licenza per attivare il plugin e accedere a tutte le funzionalita.', 'siater'); ?></p>
 
             <form method="post" action="">
                 <?php wp_nonce_field('siater_settings', 'siater_nonce'); ?>
 
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">
-                            <label for="license_code"><?php esc_html_e('Codice Licenza', 'siater'); ?></label>
-                        </th>
-                        <td>
-                            <input type="text" id="license_code" name="license_code" class="regular-text" required>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="client_name"><?php esc_html_e('Nome Utente', 'siater'); ?></label>
-                        </th>
-                        <td>
-                            <input type="text" id="client_name" name="client_name" class="regular-text" required>
-                        </td>
-                    </tr>
-                </table>
+                <p>
+                    <label for="license_code" style="display: block; margin-bottom: 5px; font-weight: 500;">
+                        <?php esc_html_e('Codice Licenza', 'siater'); ?>
+                    </label>
+                    <input type="text" id="license_code" name="license_code" class="regular-text"
+                           placeholder="XXXX-XXXX-XXXX-XXXX" required>
+                </p>
 
-                <?php submit_button(__('Attiva Licenza', 'siater'), 'primary', 'activate_license'); ?>
+                <p style="margin-bottom: 20px;">
+                    <label for="client_name" style="display: block; margin-bottom: 5px; font-weight: 500;">
+                        <?php esc_html_e('Nome Utente', 'siater'); ?>
+                    </label>
+                    <input type="text" id="client_name" name="client_name" class="regular-text"
+                           placeholder="<?php esc_attr_e('Il tuo nome o azienda', 'siater'); ?>" required>
+                </p>
+
+                <button type="submit" name="activate_license" class="button button-primary">
+                    <span class="dashicons dashicons-yes" style="margin-top: 3px;"></span>
+                    <?php esc_html_e('Attiva Licenza', 'siater'); ?>
+                </button>
             </form>
         </div>
         <?php
@@ -642,16 +704,18 @@ class AdminHandler {
     private function render_license_status(): void {
         $license_data = siater()->license->get_license_data();
         ?>
-        <div class="notice notice-success" style="padding: 10px;">
-            <strong><?php esc_html_e('Licenza Attiva', 'siater'); ?></strong>
-            <?php if ($license_data): ?>
-                - <?php echo esc_html($license_data['client_name'] ?? ''); ?>
-            <?php endif; ?>
-
-            <form method="post" action="" style="display: inline; margin-left: 20px;">
+        <div class="siater-license-active">
+            <div>
+                <span class="dashicons dashicons-yes-alt"></span>
+                <strong><?php esc_html_e('Licenza Attiva', 'siater'); ?></strong>
+                <?php if ($license_data): ?>
+                    &mdash; <?php echo esc_html($license_data['client_name'] ?? ''); ?>
+                <?php endif; ?>
+            </div>
+            <form method="post" action="">
                 <?php wp_nonce_field('siater_settings', 'siater_nonce'); ?>
-                <button type="submit" name="deactivate_license" class="button button-secondary button-small">
-                    <?php esc_html_e('Disattiva', 'siater'); ?>
+                <button type="submit" name="deactivate_license" class="button button-secondary">
+                    <?php esc_html_e('Disattiva Licenza', 'siater'); ?>
                 </button>
             </form>
         </div>

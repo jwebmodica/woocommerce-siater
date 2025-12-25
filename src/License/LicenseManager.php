@@ -214,34 +214,81 @@ class LicenseManager {
     private function api_request(string $endpoint, array $data): array {
         $url = rtrim($this->api_url, '/') . '/api/' . $endpoint;
 
-        $body = array_merge($data, [
+        // Build JSON body according to LicenseBox API spec
+        $body = array_merge([
             'product_id' => $this->product_id,
-            'api_key' => $this->api_key,
-            'current_version' => $this->version,
-            'domain' => $this->get_domain(),
-            'ip' => $this->get_ip(),
+        ], $data);
+
+        // Only activate_license needs verify_type
+        if ($endpoint === 'activate_license') {
+            $body['verify_type'] = 'non_envato';
+        }
+
+        $request_args = [
+            'timeout' => 30,
+            'headers' => [
+                'LB-API-KEY' => $this->api_key,
+                'LB-URL' => home_url(),
+                'LB-IP' => $this->get_ip(),
+                'LB-LANG' => 'english',
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode($body),
+            'sslverify' => false,
+        ];
+
+        // Debug logging
+        $this->debug_log('API Request', [
+            'url' => $url,
+            'headers' => $request_args['headers'],
+            'body' => $body,
         ]);
 
-        $response = wp_remote_post($url, [
-            'timeout' => 30,
-            'body' => $body,
-            'sslverify' => false,
-        ]);
+        $response = wp_remote_post($url, $request_args);
 
         if (is_wp_error($response)) {
+            $error_message = $response->get_error_message();
+            $this->debug_log('API Error (WP_Error)', ['message' => $error_message]);
             return [
                 'status' => false,
-                'message' => $response->get_error_message(),
+                'message' => $error_message,
             ];
         }
 
-        $body = wp_remote_retrieve_body($response);
-        $decoded = @json_decode($body, true);
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
 
-        return is_array($decoded) ? $decoded : [
-            'status' => false,
-            'message' => __('Risposta non valida dal server', 'siater'),
-        ];
+        $this->debug_log('API Response', [
+            'code' => $response_code,
+            'body' => $response_body,
+        ]);
+
+        $decoded = @json_decode($response_body, true);
+
+        if (!is_array($decoded)) {
+            $this->debug_log('API Error (Invalid JSON)', ['raw_body' => $response_body]);
+            return [
+                'status' => false,
+                'message' => __('Risposta non valida dal server', 'siater') . ' (HTTP ' . $response_code . ')',
+            ];
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Debug logging for license operations
+     */
+    private function debug_log(string $label, array $data): void {
+        if (!defined('WP_DEBUG') || !WP_DEBUG) {
+            return;
+        }
+
+        $log_file = WP_CONTENT_DIR . '/siater-license-debug.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $log_entry = "[{$timestamp}] {$label}:\n" . print_r($data, true) . "\n\n";
+
+        file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
     }
 
     /**

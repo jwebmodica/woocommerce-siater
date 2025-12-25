@@ -58,6 +58,8 @@ class Settings {
      * Available intervals for sync
      */
     public const SYNC_INTERVALS = [
+        60 => '1 minuto',
+        120 => '2 minuti',
         180 => '3 minuti',
         300 => '5 minuti',
         600 => '10 minuti',

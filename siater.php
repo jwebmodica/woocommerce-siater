@@ -3,8 +3,8 @@
  * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 3.0.0
- * Author: Jweb / Sicilware Informatica
+ * Version: 3.0.1
+ * Author: Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
  * Text Domain: siater
  * Domain Path: /languages
@@ -19,7 +19,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_VERSION', '3.0.0');
+define('SIATER_VERSION', '3.0.1');
 define('SIATER_PLUGIN_FILE', __FILE__);
 define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -78,6 +78,11 @@ final class Siater {
     public ?\Siater\Admin\AdminHandler $admin = null;
 
     /**
+     * GitHub updater
+     */
+    public ?\Siater\Core\GitHubUpdater $updater = null;
+
+    /**
      * Get plugin instance
      */
     public static function instance(): Siater {
@@ -113,6 +118,9 @@ final class Siater {
      * Initialize plugin
      */
     private function init(): void {
+        // Ensure database columns exist (upgrade path)
+        $this->ensure_db_columns();
+
         // Initialize core components
         $this->license = new \Siater\License\LicenseManager();
         $this->settings = new \Siater\Core\Settings();
@@ -121,6 +129,9 @@ final class Siater {
         if (is_admin()) {
             $this->admin = new \Siater\Admin\AdminHandler();
         }
+
+        // GitHub updater
+        $this->updater = new \Siater\Core\GitHubUpdater('jwebmodica/woocommerce-siater');
 
         // Load text domain
         add_action('init', [$this, 'load_textdomain']);
@@ -138,10 +149,62 @@ final class Siater {
     }
 
     /**
+     * Ensure all required database columns exist
+     * This handles upgrades without requiring plugin reactivation
+     */
+    private function ensure_db_columns(): void {
+        global $wpdb;
+
+        // Only run once per request and only in admin
+        static $checked = false;
+        if ($checked || !is_admin()) {
+            return;
+        }
+        $checked = true;
+
+        $settings_table = $wpdb->prefix . 'siater_settings';
+
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$settings_table'") !== $settings_table) {
+            return;
+        }
+
+        // Get current columns
+        $columns = $wpdb->get_results("SHOW COLUMNS FROM $settings_table");
+        $column_names = array_map(function($col) { return $col->Field; }, $columns);
+
+        // Required columns for cron functionality
+        $required_columns = [
+            'cron_mode' => "VARCHAR(20) DEFAULT 'wordpress'",
+            'sync_interval' => "INT DEFAULT 900",
+            'export_interval' => "INT DEFAULT 1800",
+            'cleanup_interval' => "INT DEFAULT 86400",
+            'debug_enabled' => "MEDIUMINT(9) DEFAULT 0",
+            'verbose_output' => "MEDIUMINT(9) DEFAULT 0",
+            'importa_immagini_varianti' => "MEDIUMINT(9) DEFAULT 0",
+            'solo_prodotti_con_foto_varianti' => "MEDIUMINT(9) DEFAULT 0",
+        ];
+
+        foreach ($required_columns as $column => $definition) {
+            if (!in_array($column, $column_names)) {
+                $wpdb->query("ALTER TABLE $settings_table ADD COLUMN $column $definition");
+            }
+        }
+    }
+
+    /**
      * Add custom cron schedules
      */
     public function add_cron_schedules(array $schedules): array {
         // Sync intervals
+        $schedules['siater_every_1_min'] = [
+            'interval' => 60,
+            'display' => __('Ogni minuto', 'siater'),
+        ];
+        $schedules['siater_every_2_min'] = [
+            'interval' => 120,
+            'display' => __('Ogni 2 minuti', 'siater'),
+        ];
         $schedules['siater_every_3_min'] = [
             'interval' => 180,
             'display' => __('Ogni 3 minuti', 'siater'),
@@ -188,6 +251,8 @@ final class Siater {
      */
     public static function get_schedule_name(int $interval): string {
         $map = [
+            60 => 'siater_every_1_min',
+            120 => 'siater_every_2_min',
             180 => 'siater_every_3_min',
             300 => 'siater_every_5_min',
             600 => 'siater_every_10_min',
