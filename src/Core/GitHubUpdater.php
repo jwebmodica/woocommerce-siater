@@ -94,7 +94,7 @@ class GitHubUpdater {
                 'plugin' => $this->basename,
                 'new_version' => $latest_version,
                 'url' => $release['html_url'],
-                'package' => $release['zipball_url'],
+                'package' => $release['download_url'],
                 'icons' => [],
                 'banners' => [],
                 'tested' => '',
@@ -149,7 +149,7 @@ class GitHubUpdater {
                 'description' => 'Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica).',
                 'changelog' => $this->format_changelog($release['body']),
             ],
-            'download_link' => $release['zipball_url'],
+            'download_link' => $release['download_url'],
         ];
     }
 
@@ -220,10 +220,21 @@ class GitHubUpdater {
             return null;
         }
 
+        // Look for siater-connector.zip asset first, fallback to zipball
+        $download_url = $data['zipball_url'];
+        if (!empty($data['assets'])) {
+            foreach ($data['assets'] as $asset) {
+                if ($asset['name'] === 'siater-connector.zip') {
+                    $download_url = $asset['browser_download_url'];
+                    break;
+                }
+            }
+        }
+
         $release = [
             'tag_name' => $data['tag_name'],
             'html_url' => $data['html_url'],
-            'zipball_url' => $data['zipball_url'],
+            'download_url' => $download_url,
             'body' => $data['body'] ?? '',
             'published_at' => $data['published_at'] ?? '',
         ];

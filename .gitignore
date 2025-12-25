@@ -11,3 +11,6 @@ tools/
 # macOS
 .DS_Store
 **/.DS_Store
+
+# Release zip (upload manually to GitHub releases)
+siater-connector.zip
