@@ -18,6 +18,74 @@ class AdminHandler {
         add_action('admin_menu', [$this, 'add_menu']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
         add_action('admin_init', [$this, 'handle_form']);
+
+        // Add action links on plugins page
+        add_filter('plugin_action_links_' . SIATER_PLUGIN_BASENAME, [$this, 'add_plugin_action_links']);
+
+        // Handle check for updates action
+        add_action('admin_init', [$this, 'handle_check_update']);
+
+        // Show update check notice
+        add_action('admin_notices', [$this, 'show_update_notice']);
+    }
+
+    /**
+     * Show notice after checking for updates
+     */
+    public function show_update_notice(): void {
+        if (!isset($_GET['siater_updated'])) {
+            return;
+        }
+
+        $screen = get_current_screen();
+        if (!$screen || $screen->id !== 'plugins') {
+            return;
+        }
+
+        echo '<div class="notice notice-success is-dismissible"><p>';
+        esc_html_e('Siater Connector: Controllo aggiornamenti completato.', 'siater');
+        echo '</p></div>';
+    }
+
+    /**
+     * Add action links on plugins page
+     */
+    public function add_plugin_action_links(array $links): array {
+        $settings_link = '<a href="' . admin_url('admin.php?page=siater') . '">' . __('Impostazioni', 'siater') . '</a>';
+        $update_link = '<a href="' . wp_nonce_url(admin_url('plugins.php?siater_check_update=1'), 'siater_check_update') . '">' . __('Controlla Aggiornamenti', 'siater') . '</a>';
+
+        array_unshift($links, $settings_link, $update_link);
+        return $links;
+    }
+
+    /**
+     * Handle check for updates from plugins page
+     */
+    public function handle_check_update(): void {
+        if (!isset($_GET['siater_check_update'])) {
+            return;
+        }
+
+        if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'siater_check_update')) {
+            return;
+        }
+
+        if (!current_user_can('update_plugins')) {
+            return;
+        }
+
+        // Force check for updates
+        if (siater()->updater) {
+            siater()->updater->force_check();
+        }
+
+        // Force WordPress to recheck plugin updates
+        delete_site_transient('update_plugins');
+        wp_update_plugins();
+
+        // Redirect back to plugins page with message
+        wp_redirect(admin_url('plugins.php?siater_updated=1'));
+        exit;
     }
 
     /**
