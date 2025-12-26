@@ -3,7 +3,7 @@
  * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 3.0.1
+ * Version: 3.0.2
  * Author: Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
  * Text Domain: siater
@@ -19,7 +19,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_VERSION', '3.0.1');
+define('SIATER_VERSION', '3.0.2');
 define('SIATER_PLUGIN_FILE', __FILE__);
 define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
