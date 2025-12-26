@@ -13,4 +13,4 @@ tools/
 **/.DS_Store
 
 # Release zip (upload manually to GitHub releases)
-siater-connector.zip
+siater.zip

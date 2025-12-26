@@ -220,11 +220,11 @@ class GitHubUpdater {
             return null;
         }
 
-        // Look for siater-connector.zip asset first, fallback to zipball
+        // Look for siater.zip asset first, fallback to zipball
         $download_url = $data['zipball_url'];
         if (!empty($data['assets'])) {
             foreach ($data['assets'] as $asset) {
-                if ($asset['name'] === 'siater-connector.zip') {
+                if ($asset['name'] === 'siater.zip') {
                     $download_url = $asset['browser_download_url'];
                     break;
                 }
