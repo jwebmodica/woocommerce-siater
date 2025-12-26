@@ -3,7 +3,7 @@
  * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 3.0.6
+ * Version: 3.0.7
  * Author: Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
  * Text Domain: siater
@@ -19,7 +19,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_VERSION', '3.0.6');
+define('SIATER_VERSION', '3.0.7');
 define('SIATER_PLUGIN_FILE', __FILE__);
 define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -163,8 +163,9 @@ final class Siater {
         $checked = true;
 
         $settings_table = $wpdb->prefix . 'siater_settings';
+        $feed_table = $wpdb->prefix . 'siater_feed';
 
-        // Check if table exists
+        // Check if settings table exists
         if ($wpdb->get_var("SHOW TABLES LIKE '$settings_table'") !== $settings_table) {
             return;
         }
@@ -188,6 +189,21 @@ final class Siater {
         foreach ($required_columns as $column => $definition) {
             if (!in_array($column, $column_names)) {
                 $wpdb->query("ALTER TABLE $settings_table ADD COLUMN $column $definition");
+            }
+        }
+
+        // Fix feed table column types (inizio must be INT for Unix timestamps)
+        if ($wpdb->get_var("SHOW TABLES LIKE '$feed_table'") === $feed_table) {
+            $feed_columns = $wpdb->get_results("SHOW COLUMNS FROM $feed_table");
+            foreach ($feed_columns as $col) {
+                // Fix 'inizio' column if it's MEDIUMINT (can't store Unix timestamps)
+                if ($col->Field === 'inizio' && stripos($col->Type, 'mediumint') !== false) {
+                    $wpdb->query("ALTER TABLE $feed_table MODIFY COLUMN inizio INT DEFAULT 0");
+                }
+                // Fix 'lock_timestamp' column if it's MEDIUMINT
+                if ($col->Field === 'lock_timestamp' && stripos($col->Type, 'mediumint') !== false) {
+                    $wpdb->query("ALTER TABLE $feed_table MODIFY COLUMN lock_timestamp INT DEFAULT 0");
+                }
             }
         }
     }
