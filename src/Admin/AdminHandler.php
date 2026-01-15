@@ -212,6 +212,7 @@ class AdminHandler {
             'iva' => 'intval',
             'tagliecolori' => 'intval',
             'sincronizza_categorie' => 'intval',
+            'rimuovi_catalogo' => 'intval',
             'arrotonda_prezzo' => 'intval',
             'aggiorna_immagini' => 'intval',
             'tipo_esistenza' => 'sanitize_text_field',
@@ -492,6 +493,20 @@ class AdminHandler {
                                         <?php esc_html_e('No', 'siater'); ?>
                                     </option>
                                 </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Rimuovi "CATALOGO"', 'siater'); ?></th>
+                            <td>
+                                <select name="rimuovi_catalogo">
+                                    <option value="0" <?php selected($settings->get('rimuovi_catalogo'), 0); ?>>
+                                        <?php esc_html_e('No', 'siater'); ?>
+                                    </option>
+                                    <option value="1" <?php selected($settings->get('rimuovi_catalogo'), 1); ?>>
+                                        <?php esc_html_e('Si - Rimuovi dalla prima categoria', 'siater'); ?>
+                                    </option>
+                                </select>
+                                <p class="description"><?php esc_html_e('Rimuove "CATALOGO" se appare come prima categoria (es: CATALOGO\Abbigliamento diventa Abbigliamento)', 'siater'); ?></p>
                             </td>
                         </tr>
                         <tr>
@@ -982,17 +997,17 @@ class AdminHandler {
 
             <hr>
 
-            <h2><?php esc_html_e('URL Manuali (Backup)', 'siater'); ?></h2>
-            <p class="description"><?php esc_html_e('Usa questi URL se preferisci configurare cron job esterni:', 'siater'); ?></p>
+            <h2><?php esc_html_e('URL Cron Esterni', 'siater'); ?></h2>
+            <p class="description"><?php esc_html_e('Usa questi URL per configurare cron job esterni (consigliati - bypassano cache e maintenance mode):', 'siater'); ?></p>
 
             <h4><?php esc_html_e('Sincronizzazione Prodotti', 'siater'); ?></h4>
-            <code><?php echo esc_html(home_url('/siater-sync/?authkey=' . $settings->get('rand_code'))); ?></code>
+            <code><?php echo esc_html(content_url('/plugins/siater-connector/sync.php?authkey=' . $settings->get('rand_code'))); ?></code>
 
             <h4><?php esc_html_e('Esportazione Ordini', 'siater'); ?></h4>
-            <code><?php echo esc_html(home_url('/siater-export/?authkey=' . $settings->get('rand_code'))); ?></code>
+            <code><?php echo esc_html(content_url('/plugins/siater-connector/export.php?authkey=' . $settings->get('rand_code'))); ?></code>
 
             <h4><?php esc_html_e('Pulizia Prodotti', 'siater'); ?></h4>
-            <code><?php echo esc_html(home_url('/siater-cleanup/?authkey=' . $settings->get('rand_code'))); ?></code>
+            <code><?php echo esc_html(content_url('/plugins/siater-connector/cleanup.php?authkey=' . $settings->get('rand_code'))); ?></code>
         </div>
         <?php
     }

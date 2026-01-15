@@ -42,6 +42,7 @@ class Settings {
         'applica_sconto' => 0,
         'dev_use_ssl' => 1,
         'normalizza_brand' => 0,
+        'rimuovi_catalogo' => 0,
         'aggiungi_iva' => 0,
         'importa_immagini_varianti' => 0,
         'solo_prodotti_con_foto_varianti' => 0,

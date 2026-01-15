@@ -3,7 +3,7 @@
  * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 3.0.7
+ * Version: 3.0.8
  * Author: Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
  * Text Domain: siater
@@ -19,7 +19,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_VERSION', '3.0.7');
+define('SIATER_VERSION', '3.0.8');
 define('SIATER_PLUGIN_FILE', __FILE__);
 define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -184,6 +184,7 @@ final class Siater {
             'verbose_output' => "MEDIUMINT(9) DEFAULT 0",
             'importa_immagini_varianti' => "MEDIUMINT(9) DEFAULT 0",
             'solo_prodotti_con_foto_varianti' => "MEDIUMINT(9) DEFAULT 0",
+            'rimuovi_catalogo' => "MEDIUMINT(9) DEFAULT 0",
         ];
 
         foreach ($required_columns as $column => $definition) {
@@ -192,9 +193,16 @@ final class Siater {
             }
         }
 
-        // Fix feed table column types (inizio must be INT for Unix timestamps)
+        // Fix feed table column types and names
         if ($wpdb->get_var("SHOW TABLES LIKE '$feed_table'") === $feed_table) {
             $feed_columns = $wpdb->get_results("SHOW COLUMNS FROM $feed_table");
+            $feed_column_names = array_map(function($col) { return $col->Field; }, $feed_columns);
+
+            // Rename 'offset' to 'offsetto' if old column exists (legacy migration)
+            if (in_array('offset', $feed_column_names) && !in_array('offsetto', $feed_column_names)) {
+                $wpdb->query("ALTER TABLE $feed_table CHANGE `offset` offsetto INT DEFAULT 0");
+            }
+
             foreach ($feed_columns as $col) {
                 // Fix 'inizio' column if it's MEDIUMINT (can't store Unix timestamps)
                 if ($col->Field === 'inizio' && stripos($col->Type, 'mediumint') !== false) {
@@ -545,6 +553,7 @@ register_activation_hook(__FILE__, function() {
             applica_sconto MEDIUMINT(9) DEFAULT 0,
             dev_use_ssl MEDIUMINT(9) DEFAULT 1,
             normalizza_brand MEDIUMINT(9) DEFAULT 0,
+            rimuovi_catalogo MEDIUMINT(9) DEFAULT 0,
             aggiungi_iva MEDIUMINT(9) DEFAULT 0,
             importa_immagini_varianti MEDIUMINT(9) DEFAULT 0,
             solo_prodotti_con_foto_varianti MEDIUMINT(9) DEFAULT 0,
@@ -616,6 +625,9 @@ register_activation_hook(__FILE__, function() {
         if (!in_array('solo_prodotti_con_foto_varianti', $column_names)) {
             $wpdb->query("ALTER TABLE $settings_table ADD COLUMN solo_prodotti_con_foto_varianti MEDIUMINT(9) DEFAULT 0");
         }
+        if (!in_array('rimuovi_catalogo', $column_names)) {
+            $wpdb->query("ALTER TABLE $settings_table ADD COLUMN rimuovi_catalogo MEDIUMINT(9) DEFAULT 0");
+        }
         // Cron options
         if (!in_array('cron_mode', $column_names)) {
             $wpdb->query("ALTER TABLE $settings_table ADD COLUMN cron_mode VARCHAR(20) DEFAULT 'wordpress'");
@@ -633,6 +645,11 @@ register_activation_hook(__FILE__, function() {
 
     // Schedule cron events
     Siater::schedule_cron_events();
+
+    // Register rewrite rules before flushing (init may have already fired)
+    add_rewrite_rule('siater-sync/?$', 'index.php?siater_sync=1', 'top');
+    add_rewrite_rule('siater-export/?$', 'index.php?siater_export=1', 'top');
+    add_rewrite_rule('siater-cleanup/?$', 'index.php?siater_cleanup=1', 'top');
 
     // Flush rewrite rules
     flush_rewrite_rules();
