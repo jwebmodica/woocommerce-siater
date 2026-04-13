@@ -185,6 +185,9 @@ final class Siater {
             'importa_immagini_varianti' => "MEDIUMINT(9) DEFAULT 0",
             'solo_prodotti_con_foto_varianti' => "MEDIUMINT(9) DEFAULT 0",
             'rimuovi_catalogo' => "MEDIUMINT(9) DEFAULT 0",
+            'applica_qty_minima' => "MEDIUMINT(9) DEFAULT 0",
+            'usa_varianti_web' => "MEDIUMINT(9) DEFAULT 0",
+            'converti_taglie_mezzo' => "MEDIUMINT(9) DEFAULT 0",
         ];
 
         foreach ($required_columns as $column => $definition) {

@@ -48,6 +48,10 @@ class Settings {
         'solo_prodotti_con_foto_varianti' => 0,
         'debug_enabled' => 0,
         'verbose_output' => 0,
+        // Advanced options
+        'applica_qty_minima' => 0,
+        'usa_varianti_web' => 0,
+        'converti_taglie_mezzo' => 0,
         // Cron options
         'cron_mode' => 'wordpress',        // 'wordpress' or 'manual'
         'sync_interval' => 900,            // seconds: 180, 300, 600, 900 (3, 5, 10, 15 min)
@@ -226,6 +230,7 @@ class Settings {
             'PrezzoListinoIvaCompresa' => $this->get('iva', 0) ? 'Yes' : 'No',
             'WithLotti' => $this->get('tagliecolori', 0) ? 'Yes' : 'No',
             'WithFotoVar' => $this->get('importa_immagini_varianti', 0) ? 'Yes' : 'No',
+            'WithVariantiWeb' => $this->get('usa_varianti_web', 0) ? 'Yes' : 'No',
         ];
 
         return sprintf(

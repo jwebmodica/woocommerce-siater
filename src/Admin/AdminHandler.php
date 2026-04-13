@@ -225,6 +225,10 @@ class AdminHandler {
             'solo_prodotti_con_foto_varianti' => 'intval',
             'debug_enabled' => 'intval',
             'verbose_output' => 'intval',
+            // Advanced options
+            'applica_qty_minima' => 'intval',
+            'usa_varianti_web' => 'intval',
+            'converti_taglie_mezzo' => 'intval',
             // Cron options
             'cron_mode' => 'sanitize_text_field',
             'sync_interval' => 'intval',
@@ -649,6 +653,54 @@ class AdminHandler {
                                         <?php esc_html_e('Si', 'siater'); ?>
                                     </option>
                                 </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Quantita Minima', 'siater'); ?></th>
+                            <td>
+                                <select name="applica_qty_minima">
+                                    <option value="0" <?php selected($settings->get('applica_qty_minima'), 0); ?>>
+                                        <?php esc_html_e('No', 'siater'); ?>
+                                    </option>
+                                    <option value="1" <?php selected($settings->get('applica_qty_minima'), 1); ?>>
+                                        <?php esc_html_e('Si', 'siater'); ?>
+                                    </option>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Azzera lo stock se inferiore o uguale alla quantita minima ordine del prodotto.', 'siater'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Nomi Varianti Web', 'siater'); ?></th>
+                            <td>
+                                <select name="usa_varianti_web">
+                                    <option value="0" <?php selected($settings->get('usa_varianti_web'), 0); ?>>
+                                        <?php esc_html_e('No', 'siater'); ?>
+                                    </option>
+                                    <option value="1" <?php selected($settings->get('usa_varianti_web'), 1); ?>>
+                                        <?php esc_html_e('Si', 'siater'); ?>
+                                    </option>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Usa i nomi varianti configurati per il web in SIA (es. "Black" invece di "BLK").', 'siater'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Converti Taglie Mezzo', 'siater'); ?></th>
+                            <td>
+                                <select name="converti_taglie_mezzo">
+                                    <option value="0" <?php selected($settings->get('converti_taglie_mezzo'), 0); ?>>
+                                        <?php esc_html_e('No', 'siater'); ?>
+                                    </option>
+                                    <option value="1" <?php selected($settings->get('converti_taglie_mezzo'), 1); ?>>
+                                        <?php esc_html_e('Si', 'siater'); ?>
+                                    </option>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Converte taglie con trattino in formato decimale (es. "9-" diventa "9.5").', 'siater'); ?>
+                                </p>
                             </td>
                         </tr>
                             </table>
