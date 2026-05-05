@@ -3,7 +3,7 @@
  * Plugin Name: Siater Connector
  * Plugin URI: https://www.sicilwareinformatica.it
  * Description: Sincronizza prodotti tra WooCommerce e il gestionale SIA (Sicilware Informatica). Importa prodotti semplici e variabili, gestisce taglie/colori, sincronizza prezzi e giacenze.
- * Version: 3.1.0
+ * Version: 3.1.1
  * Author: Sicilware Informatica
  * Author URI: https://www.sicilwareinformatica.it
  * Text Domain: siater
@@ -19,7 +19,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SIATER_VERSION', '3.1.0');
+define('SIATER_VERSION', '3.1.1');
 define('SIATER_PLUGIN_FILE', __FILE__);
 define('SIATER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIATER_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -180,6 +180,7 @@ final class Siater {
             'sync_interval' => "INT DEFAULT 900",
             'export_interval' => "INT DEFAULT 1800",
             'cleanup_interval' => "INT DEFAULT 86400",
+            'sync_cooldown_hours' => "TINYINT UNSIGNED DEFAULT 3",
             'debug_enabled' => "MEDIUMINT(9) DEFAULT 0",
             'verbose_output' => "MEDIUMINT(9) DEFAULT 0",
             'importa_immagini_varianti' => "MEDIUMINT(9) DEFAULT 0",
@@ -643,6 +644,9 @@ register_activation_hook(__FILE__, function() {
         }
         if (!in_array('cleanup_interval', $column_names)) {
             $wpdb->query("ALTER TABLE $settings_table ADD COLUMN cleanup_interval INT DEFAULT 86400");
+        }
+        if (!in_array('sync_cooldown_hours', $column_names)) {
+            $wpdb->query("ALTER TABLE $settings_table ADD COLUMN sync_cooldown_hours TINYINT UNSIGNED DEFAULT 3");
         }
     }
 

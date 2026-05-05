@@ -57,6 +57,7 @@ class Settings {
         'sync_interval' => 900,            // seconds: 180, 300, 600, 900 (3, 5, 10, 15 min)
         'export_interval' => 1800,         // seconds: 1800, 3600 (30 min, 1 hour)
         'cleanup_interval' => 86400,       // seconds: 86400, 259200, 604800 (1 day, 3 days, 1 week)
+        'sync_cooldown_hours' => 3,        // hours: 1, 2, 3, 6 - cooldown between complete sync cycles
     ];
 
     /**
@@ -86,6 +87,16 @@ class Settings {
         86400 => '1 giorno',
         259200 => '3 giorni',
         604800 => '1 settimana',
+    ];
+
+    /**
+     * Available cooldown hours between complete sync cycles
+     */
+    public const SYNC_COOLDOWN_HOURS = [
+        1 => '1 ora',
+        2 => '2 ore',
+        3 => '3 ore',
+        6 => '6 ore',
     ];
 
     /**

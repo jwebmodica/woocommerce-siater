@@ -234,6 +234,7 @@ class AdminHandler {
             'sync_interval' => 'intval',
             'export_interval' => 'intval',
             'cleanup_interval' => 'intval',
+            'sync_cooldown_hours' => 'intval',
         ];
 
         // Check if cron settings changed
@@ -245,6 +246,9 @@ class AdminHandler {
         foreach ($fields as $field => $sanitize) {
             if (isset($_POST[$field])) {
                 $value = call_user_func($sanitize, $_POST[$field]);
+                if ($field === 'sync_cooldown_hours' && !array_key_exists((int) $value, \Siater\Core\Settings::SYNC_COOLDOWN_HOURS)) {
+                    $value = 3;
+                }
                 $settings->set($field, $value);
             }
         }
@@ -765,6 +769,21 @@ class AdminHandler {
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php esc_html_e('Cooldown Sincronizzazione Completa', 'siater'); ?></th>
+                                    <td>
+                                        <select name="sync_cooldown_hours">
+                                            <?php foreach (\Siater\Core\Settings::SYNC_COOLDOWN_HOURS as $hours => $label): ?>
+                                                <option value="<?php echo esc_attr($hours); ?>" <?php selected((int)$settings->get('sync_cooldown_hours', 3), $hours); ?>>
+                                                    <?php echo esc_html($label); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <p class="description">
+                                            <?php esc_html_e('Tempo minimo di attesa tra un ciclo di sincronizzazione completo e il successivo.', 'siater'); ?>
+                                        </p>
                                     </td>
                                 </tr>
                             </table>
