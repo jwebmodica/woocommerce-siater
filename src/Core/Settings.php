@@ -253,6 +253,40 @@ class Settings {
     }
 
     /**
+     * Get the SIA feed URL for a single product by Codice (debug)
+     */
+    public function get_debug_feed_url(string $codice): string {
+        $base_url = $this->get('url', '');
+        if (empty($base_url) || $codice === '') {
+            return '';
+        }
+
+        $protocol = $this->get('dev_use_ssl', 1) ? 'https' : 'http';
+        $base_url = preg_replace('#^https?://#', '', $base_url);
+        $base_url = rtrim($base_url, '/');
+
+        $params = [
+            'Command' => 'GetArt',
+            'Codice' => $codice,
+            'WithMemo' => 'Yes',
+            'PrezzoListinoX' => $this->get('listino', 1),
+            'WithEsistenze' => 'Yes',
+            'WithSubImg' => 'Yes',
+            'PrezzoListinoIvaCompresa' => $this->get('iva', 0) ? 'Yes' : 'No',
+            'WithLotti' => $this->get('tagliecolori', 0) ? 'Yes' : 'No',
+            'WithFotoVar' => $this->get('importa_immagini_varianti', 0) ? 'Yes' : 'No',
+            'WithVariantiWeb' => $this->get('usa_varianti_web', 0) ? 'Yes' : 'No',
+        ];
+
+        return sprintf(
+            '%s://www.%s/Rss.aspx?%s',
+            $protocol,
+            $base_url,
+            http_build_query($params)
+        );
+    }
+
+    /**
      * Get feed URL for SKU-only fetch (for product cleanup)
      */
     public function get_sku_feed_url(int $offset = 0, int $batch_size = 500): string {
@@ -286,14 +320,53 @@ class Settings {
      * Get export file path
      */
     public function get_export_path(): string {
-        $upload_dir = wp_upload_dir();
-        $export_dir = $upload_dir['basedir'] . '/siater-exports';
+        return $this->get_export_dir() . '/WEB_02_ORDINI.csv';
+    }
+
+    /**
+     * Get (and prepare) the export directory.
+     *
+     * Exports are stored in "/siater-exports" at the website root (ABSPATH),
+     * outside wp-content/uploads, and the file is retrieved via FTP. The
+     * directory root is still served by the web server, so a protective
+     * .htaccess is written to block any direct download over HTTP.
+     */
+    private function get_export_dir(): string {
+        $export_dir = untrailingslashit(ABSPATH) . '/siater-exports';
 
         if (!file_exists($export_dir)) {
             wp_mkdir_p($export_dir);
         }
 
-        return $export_dir . '/WEB_02_ORDINI.csv';
+        $this->protect_export_dir($export_dir);
+
+        return $export_dir;
+    }
+
+    /**
+     * Ensure an .htaccess that denies all direct web access to the export dir.
+     *
+     * Called on every export run: if the file is missing, empty, or its
+     * contents were altered, it is (re)written so protection can never be
+     * silently lost.
+     */
+    private function protect_export_dir(string $dir): void {
+        $htaccess = $dir . '/.htaccess';
+
+        $rules = "# Siater Connector - block all direct web access to order exports\n"
+            . "# The CSV is retrieved via FTP only.\n"
+            . "<IfModule mod_authz_core.c>\n"
+            . "    Require all denied\n"
+            . "</IfModule>\n"
+            . "<IfModule !mod_authz_core.c>\n"
+            . "    Order deny,allow\n"
+            . "    Deny from all\n"
+            . "</IfModule>\n";
+
+        // Recreate whenever it is missing or does not match the expected rules.
+        if (!file_exists($htaccess) || @file_get_contents($htaccess) !== $rules) {
+            @file_put_contents($htaccess, $rules);
+        }
     }
 
     /**

@@ -4,7 +4,7 @@ Tags: woocommerce, sia, gestionale, sync, import
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 3.0.0
+Stable tag: 3.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -55,6 +55,11 @@ Per la sincronizzazione automatica, configura questi cron job:
 
 == Changelog ==
 
+= 3.1.2 =
+* Esportazione ordini spostata nella cartella "/siater-exports" nella root del sito, fuori da wp-content/uploads
+* Aggiunto file .htaccess che blocca l'accesso diretto via web al CSV degli ordini (scaricabile solo via FTP)
+* Il file .htaccess viene verificato e ricreato automaticamente ad ogni esportazione se mancante o alterato
+
 = 3.0.0 =
 * Rinominato plugin da "Siater Connector 2026" a "Siater Connector"
 * Namespace aggiornato da Siater2026 a Siater
@@ -72,6 +77,9 @@ Per la sincronizzazione automatica, configura questi cron job:
 * Gestione memoria ottimizzata
 
 == Upgrade Notice ==
+
+= 3.1.2 =
+Il file di esportazione ordini viene ora salvato in "/siater-exports" nella root del sito ed è protetto dall'accesso web diretto. Eliminare manualmente via FTP il vecchio file in wp-content/uploads/siater-exports/.
 
 = 3.0.0 =
 Aggiornamento naming del plugin. Rinominare la cartella del plugin in "siater" dopo l'aggiornamento.

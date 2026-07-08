@@ -1094,6 +1094,19 @@ class AdminHandler {
             $logger->clear();
         }
 
+        // Handle single-product debug update
+        $debug_result = null;
+        $debug_codice = '';
+        if (isset($_POST['debug_update_product']) && wp_verify_nonce($_POST['debug_update_nonce'] ?? '', 'siater_debug_update')) {
+            if (current_user_can('manage_woocommerce')) {
+                $debug_codice = sanitize_text_field($_POST['debug_codice'] ?? '');
+                if ($debug_codice !== '') {
+                    $sync = new \Siater\Sync\SyncHandler(siater()->settings);
+                    $debug_result = $sync->run_debug($debug_codice);
+                }
+            }
+        }
+
         $content = $logger->get_content(200);
         ?>
         <div class="wrap">
@@ -1104,6 +1117,63 @@ class AdminHandler {
                 <?php echo esc_html($logger->get_file_path()); ?>
             </p>
 
+            <div class="siater-section" style="margin-top: 20px;">
+                <h2><?php esc_html_e('Aggiorna Singolo Prodotto (Debug)', 'siater'); ?></h2>
+                <p class="description">
+                    <?php esc_html_e('Inserisci il codice prodotto (Codice SIA) per forzare un aggiornamento immediato di quel singolo prodotto. Bypassa il cooldown e il lock di sincronizzazione. Utile per testare modifiche o forzare la sync di un articolo specifico.', 'siater'); ?>
+                </p>
+
+                <form method="post" action="">
+                    <?php wp_nonce_field('siater_debug_update', 'debug_update_nonce'); ?>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="debug_codice"><?php esc_html_e('Codice Prodotto', 'siater'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text" id="debug_codice" name="debug_codice" class="regular-text"
+                                       value="<?php echo esc_attr($debug_codice); ?>"
+                                       placeholder="es. FK26-SW0531" required>
+                                <p class="description">
+                                    <?php esc_html_e('Corrisponde al parametro "Codice" della Rss.aspx del SIA.', 'siater'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                    <p>
+                        <button type="submit" name="debug_update_product" class="button button-primary">
+                            <span class="dashicons dashicons-update" style="margin-top: 4px;"></span>
+                            <?php esc_html_e('Aggiorna Prodotto', 'siater'); ?>
+                        </button>
+                    </p>
+                </form>
+
+                <?php if ($debug_result !== null): ?>
+                    <?php $notice_class = $debug_result['success'] ? 'notice-success' : 'notice-error'; ?>
+                    <div class="notice <?php echo esc_attr($notice_class); ?>" style="margin-top: 10px; padding: 10px 12px;">
+                        <p><strong><?php echo esc_html($debug_result['message']); ?></strong></p>
+                        <p style="margin: 4px 0;">
+                            <strong><?php esc_html_e('Codice:', 'siater'); ?></strong>
+                            <code><?php echo esc_html($debug_result['sku']); ?></code>
+                        </p>
+                        <p style="margin: 4px 0;">
+                            <strong><?php esc_html_e('Righe trovate:', 'siater'); ?></strong>
+                            <?php echo (int) $debug_result['found']; ?>
+                            &nbsp;|&nbsp;
+                            <strong><?php esc_html_e('Elaborate:', 'siater'); ?></strong>
+                            <?php echo (int) $debug_result['processed']; ?>
+                        </p>
+                        <?php if (!empty($debug_result['url'])): ?>
+                            <p style="margin: 4px 0;">
+                                <strong><?php esc_html_e('URL chiamata:', 'siater'); ?></strong><br>
+                                <code style="word-break: break-all;"><?php echo esc_html($debug_result['url']); ?></code>
+                            </p>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <h2 style="margin-top: 30px;"><?php esc_html_e('Gestione Log', 'siater'); ?></h2>
             <form method="post" action="">
                 <?php wp_nonce_field('siater_clear_log', 'clear_log_nonce'); ?>
                 <button type="submit" name="clear_log" class="button">
