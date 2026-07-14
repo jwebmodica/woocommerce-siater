@@ -4,7 +4,7 @@ Tags: woocommerce, sia, gestionale, sync, import
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 3.1.2
+Stable tag: 3.1.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -55,6 +55,9 @@ Per la sincronizzazione automatica, configura questi cron job:
 
 == Changelog ==
 
+= 3.1.3 =
+* Rinominato il file CSV di esportazione ordini da "WEB_02_ORDINI.csv" a "WEB_01_ORDINI.csv"
+
 = 3.1.2 =
 * Esportazione ordini spostata nella cartella "/siater-exports" nella root del sito, fuori da wp-content/uploads
 * Aggiunto file .htaccess che blocca l'accesso diretto via web al CSV degli ordini (scaricabile solo via FTP)
@@ -77,6 +80,9 @@ Per la sincronizzazione automatica, configura questi cron job:
 * Gestione memoria ottimizzata
 
 == Upgrade Notice ==
+
+= 3.1.3 =
+Il file CSV degli ordini viene ora salvato come "WEB_01_ORDINI.csv" (in precedenza "WEB_02_ORDINI.csv").
 
 = 3.1.2 =
 Il file di esportazione ordini viene ora salvato in "/siater-exports" nella root del sito ed è protetto dall'accesso web diretto. Eliminare manualmente via FTP il vecchio file in wp-content/uploads/siater-exports/.

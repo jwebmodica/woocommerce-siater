@@ -320,7 +320,7 @@ class Settings {
      * Get export file path
      */
     public function get_export_path(): string {
-        return $this->get_export_dir() . '/WEB_02_ORDINI.csv';
+        return $this->get_export_dir() . '/WEB_01_ORDINI.csv';
     }
 
     /**
